@@ -86,7 +86,7 @@ namespace AvaloniaVS.Views
 
         private static readonly GridLength ZeroStar = new GridLength(0, GridUnitType.Star);
         private static readonly GridLength OneStar = new GridLength(1, GridUnitType.Star);
-        private readonly Throttle<string> _throttle;
+        private readonly Throttle<ITextSnapshot> _throttle;
         private readonly ColumnDefinition _previewCol = new ColumnDefinition { Width = OneStar };
         private readonly ColumnDefinition _codeCol = new ColumnDefinition { Width = OneStar };
         private Project _project;
@@ -95,6 +95,9 @@ namespace AvaloniaVS.Views
         private bool _loadingTargets;
         private bool _isStarted;
         private bool _isPaused;
+        private bool _isBuilding;
+        private DateTime _lastCrashRestart = DateTime.MinValue;
+        private static readonly TimeSpan CrashRestartWindow = TimeSpan.FromSeconds(60);
         private SemaphoreSlim _startingProcess = new SemaphoreSlim(1, 1);
         private bool _disposed;
         private double _scaling = 1;
@@ -110,13 +113,15 @@ namespace AvaloniaVS.Views
         {
             InitializeComponent();
 
-            _throttle = new Throttle<string>(TimeSpan.FromMilliseconds(300), UpdateXaml);
+            _throttle = new Throttle<ITextSnapshot>(TimeSpan.FromMilliseconds(300), UpdateXaml);
             _previewResizethrottle = new(TimeSpan.FromMilliseconds(500), UpdateScaling);
             Process = new PreviewerProcess();
             Process.ErrorChanged += ErrorChanged;
             Process.FrameReceived += FrameReceived;
             Process.ProcessExited += ProcessExited;
             previewer.Process = Process;
+            previewer.RestartRequested += (_, _) => RestartProcessAsync().FireAndForget();
+            previewer.ErrorLocationRequested += (_, location) => NavigateToXaml(location.Line, location.Column);
             pausedMessage.Visibility = Visibility.Collapsed;
             UpdateLayoutForView();
 
@@ -152,6 +157,29 @@ namespace AvaloniaVS.Views
                     {
                         View = _unPausedView;
                     }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets or sets a value indicating whether a build is running.
+        /// </summary>
+        /// <remarks>
+        /// The previewer host loads the project's output assemblies, so it is stopped while
+        /// building to avoid locking them. Unlike <see cref="IsPaused"/> (debugging), the view
+        /// isn't switched to Source and the last rendered frame stays on screen; the preview
+        /// restarts automatically when the build finishes.
+        /// </remarks>
+        public bool IsBuilding
+        {
+            get => _isBuilding;
+            set
+            {
+                if (_isBuilding != value)
+                {
+                    Log.Logger.Debug("Setting building state to {State}", value);
+                    _isBuilding = value;
+                    StartStopProcessAsync().FireAndForget();
                 }
             }
         }
@@ -461,8 +489,11 @@ namespace AvaloniaVS.Views
             // Change: keep the preview process alive even if we're in 
             // Source only mode - it prevents the error icon from showing because
             // of process exited and keeps the Error tagger active
-            if (IsPaused)
+            if (IsPaused || IsBuilding)
             {
+                pausedMessage.Text = IsPaused
+                    ? "The designer is paused while debugging."
+                    : "Building\u2026 the preview will refresh when the build finishes.";
                 pausedMessage.Visibility = Visibility.Visible;
                 Process.Stop();
             }
@@ -536,15 +567,25 @@ namespace AvaloniaVS.Views
             var hostAppPath = SelectedTarget?.HostApp;
             var isNetFx = SelectedTarget?.IsNetFramework;
 
-            if (assemblyPath != null && executablePath != null && hostAppPath != null && isNetFx != null)
+            if (assemblyPath != null && executablePath != null && string.IsNullOrEmpty(hostAppPath))
+            {
+                Log.Logger.Error("No previewer host found for {ExecutablePath}", executablePath);
+                ShowError(
+                    "Previewer Not Found",
+                    $"Couldn't find Avalonia's previewer host (Avalonia.Designer.HostApp) for '{SelectedTarget.Name}'. " +
+                    "Make sure the project references Avalonia, has been restored, and has been built at least once.");
+            }
+            else if (assemblyPath != null && executablePath != null && hostAppPath != null && isNetFx != null)
             {
                 RebuildMetadata(assemblyPath, executablePath);
+
+                _buildRequired = false;
 
                 try
                 {
                     await _startingProcess.WaitAsync();
 
-                    if (!IsPaused)
+                    if (!IsPaused && !IsBuilding)
                     {
                         await Process.SetScalingAsync(VisualTreeHelper.GetDpi(this).DpiScaleX * _scaling);
                         await Process.StartAsync(assemblyPath, executablePath, hostAppPath, (bool)isNetFx);
@@ -571,7 +612,6 @@ namespace AvaloniaVS.Views
                 {
                     _startingProcess.Release();
                 }
-                _buildRequired = false;
             }
             else
             {
@@ -695,7 +735,14 @@ namespace AvaloniaVS.Views
 
         private async void ErrorChanged(object sender, EventArgs e)
         {
-            if (Process.Bitmap == null || Process.Error != null)
+            if (Process.Error != null)
+            {
+                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+                // Keep the last good frame visible with an error banner over it.
+                ShowMarkupError(Process.Error);
+            }
+            else if (Process.Bitmap == null)
             {
                 await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
@@ -729,42 +776,113 @@ namespace AvaloniaVS.Views
         private async void ProcessExited(object sender, EventArgs e)
         {
             _firstFrame = true;
-            if (!IsPaused)
-            {
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
-                ShowError(
-                    "Process Exited",
-                    "The previewer process exited unexpectedly. See the output window for more information.");
+            if (IsPaused || IsBuilding || _disposed || Process.LastExitWasRequested)
+            {
+                return;
             }
+
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+            // Restart once automatically; if it crashes again soon after, stop and explain.
+            var now = DateTime.UtcNow;
+            if (now - _lastCrashRestart > CrashRestartWindow)
+            {
+                _lastCrashRestart = now;
+                Log.Logger.Warning("Previewer exited unexpectedly (code {ExitCode}); restarting", Process.LastExitCode);
+                await RestartProcessAsync();
+                return;
+            }
+
+            var message = Process.LastExitCode is int code
+                ? $"The previewer process exited unexpectedly with code {code}."
+                : "The previewer process exited unexpectedly.";
+
+            var output = LastLines(Process.RecentOutput, 8);
+            if (!string.IsNullOrWhiteSpace(output))
+            {
+                message += Environment.NewLine + Environment.NewLine + output;
+            }
+
+            message += Environment.NewLine + Environment.NewLine + "The full log is in the Output window (Avalonia XAML Tools).";
+
+            ShowError("Process Exited", message, canRestart: true);
         }
 
-        private void ShowError(string heading, string message)
+        private async Task RestartProcessAsync()
+        {
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+            if (_disposed || IsPaused || IsBuilding)
+            {
+                return;
+            }
+
+            Process.Stop();
+            await StartProcessAsync();
+        }
+
+        private void NavigateToXaml(int line, int column)
+        {
+            if (_editor?.TextView is not { } view || line < 1)
+            {
+                return;
+            }
+
+            var snapshot = view.TextSnapshot;
+            var lineNumber = Math.Min(line, snapshot.LineCount) - 1;
+            var textLine = snapshot.GetLineFromLineNumber(lineNumber);
+            var position = textLine.Start.Position + Math.Max(0, Math.Min(column - 1, textLine.Length));
+            var point = new SnapshotPoint(snapshot, position);
+
+            if (View == AvaloniaDesignerView.Design)
+            {
+                View = AvaloniaDesignerView.Split;
+            }
+
+            view.Caret.MoveTo(point);
+            view.ViewScroller.EnsureSpanVisible(new SnapshotSpan(point, 0), EnsureSpanVisibleOptions.AlwaysCenter);
+            System.Windows.Input.Keyboard.Focus(view.VisualElement);
+        }
+
+        private static string LastLines(string text, int count)
+        {
+            if (string.IsNullOrEmpty(text))
+            {
+                return text;
+            }
+
+            var lines = text.Split(new[] { Environment.NewLine }, StringSplitOptions.None);
+            return string.Join(Environment.NewLine, lines.Skip(Math.Max(0, lines.Length - count)));
+        }
+
+        private void ShowError(string heading, string message, bool canRestart = false)
         {
             errorIndicator.Visibility = Visibility.Visible;
             errorHeading.Text = heading;
             errorMessage.Text = message;
-            if (_buildRequired == true)
-            {
-                previewer.buildButton.Visibility = Visibility.Visible;
-            }
-            else
-            {
-                previewer.buildButton.Visibility = Visibility.Hidden;
-            }
-            previewer.error.Visibility = Visibility.Visible;
-            previewer.errorHeading.Text = heading;
-            previewer.errorMessage.Text = message;
+            previewer.ShowBlockingError(heading, message, showBuild: _buildRequired, showRestart: canRestart);
+        }
+
+        private void ShowMarkupError(Avalonia.Remote.Protocol.Designer.ExceptionDetails error)
+        {
+            errorIndicator.Visibility = Visibility.Visible;
+            errorHeading.Text = "Invalid Markup";
+            errorMessage.Text = error?.Message ?? "Check the Error List for more information.";
+            previewer.ShowMarkupError(error);
         }
 
         private void ShowPreview()
         {
             errorIndicator.Visibility = Visibility.Collapsed;
+            previewer.HideErrors();
         }
 
         private void TextChanged(object sender, TextContentChangedEventArgs e)
         {
-            _throttle.Queue(e.After.GetText());
+            // Queue the immutable snapshot, not its text: GetText() copies the whole
+            // document, so only do it once the user pauses typing.
+            _throttle.Queue(e.After);
         }
 
         private void UpdateLayoutForView()
@@ -828,8 +946,9 @@ namespace AvaloniaVS.Views
 
         private void SwapPreviewAndXamlPanes(object sender, RoutedEventArgs args) => PreviewAndXamlPanesSwapped = !PreviewAndXamlPanesSwapped;
 
-        private void UpdateXaml(string xaml)
+        private void UpdateXaml(ITextSnapshot snapshot)
         {
+            var xaml = snapshot.GetText();
             if (Process.IsReady)
             {
                 Process.UpdateXamlAsync(xaml).FireAndForget();

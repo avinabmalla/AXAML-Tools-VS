@@ -69,15 +69,51 @@
         Margin="20,10,20,0"
         HorizontalAlignment="Center"
         TextWrapping="Wrap" />
-        <Button
-          Name="buildButton"
-          Margin="0,15,0,0"
-          Padding="7,5,7,5"
-          Visibility="Hidden"
-          HorizontalAlignment="Center"
-          VerticalAlignment="Center"
-          Content="Build" />
+        <StackPanel Margin="0,15,0,0" HorizontalAlignment="Center" Orientation="Horizontal">
+          <Button
+            Name="buildButton"
+            Padding="7,5,7,5"
+            Visibility="Collapsed"
+            Content="Build" />
+          <Button
+            Name="restartButton"
+            Margin="8,0,0,0"
+            Padding="7,5,7,5"
+            Visibility="Collapsed"
+            Content="Restart previewer" />
+        </StackPanel>
       </StackPanel>
+    </Border>
+
+    <!-- Markup errors don't hide the preview: the last good frame stays visible under this banner. -->
+    <Border Name="markupError"
+            HorizontalAlignment="Stretch"
+            VerticalAlignment="Top"
+            Margin="8"
+            Padding="8,6"
+            CornerRadius="3"
+            BorderThickness="1"
+            BorderBrush="#f55762"
+            Background="{DynamicResource VsBrush.InfoBackground}"
+            Visibility="Collapsed">
+      <DockPanel>
+        <Grid DockPanel.Dock="Left" Margin="0,0,8,0" VerticalAlignment="Top">
+          <Ellipse Width="16" Height="16" Fill="#f55762" />
+          <TextBlock HorizontalAlignment="Center" VerticalAlignment="Center"
+                     FontWeight="ExtraBold" Foreground="White" Text="!" />
+        </Grid>
+        <TextBlock Name="markupErrorLocation"
+                   DockPanel.Dock="Right"
+                   Margin="8,0,0,0"
+                   VerticalAlignment="Top">
+          <Hyperlink Name="markupErrorLink">
+            <Run Name="markupErrorLinkText" />
+          </Hyperlink>
+        </TextBlock>
+        <TextBlock Name="markupErrorMessage"
+                   Foreground="{DynamicResource VsBrush.InfoText}"
+                   TextWrapping="Wrap" />
+      </DockPanel>
     </Border>
     </Grid>
 </UserControl>

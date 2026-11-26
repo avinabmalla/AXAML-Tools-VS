@@ -215,11 +215,9 @@ namespace AvaloniaVS.Shared.Views
         {
             Log.Logger.Debug("Build started");
 
-            _isPaused = true;
-
             if (_content != null)
             {
-                _content.IsPaused = _isPaused;
+                _content.IsBuilding = true;
             }
         }
 
@@ -227,12 +225,10 @@ namespace AvaloniaVS.Shared.Views
         {
             Log.Logger.Debug("Build finished");
 
-            _isPaused = false;
-
             if (_content != null)
             {
                 _content.InvalidateCompletionMetadata();
-                _content.IsPaused = _isPaused;
+                _content.IsBuilding = false;
             }
         }
 

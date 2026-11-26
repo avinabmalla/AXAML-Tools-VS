@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
@@ -34,6 +35,8 @@ namespace AvaloniaVS.Services
         private IDisposable _listener;
         private WriteableBitmap _bitmap;
         private ExceptionDetails _error;
+        private const int RecentOutputLines = 20;
+        private readonly Queue<string> _recentOutput = new Queue<string>();
 
         /// <summary>
         /// Initializes a new instance of the <see cref="PreviewerProcess"/> class.
@@ -68,6 +71,32 @@ namespace AvaloniaVS.Services
                 }
             }
         }
+
+        /// <summary>
+        /// Gets the last lines the previewer host wrote to stdout/stderr, for showing
+        /// alongside a crash.
+        /// </summary>
+        public string RecentOutput
+        {
+            get
+            {
+                lock (_recentOutput)
+                {
+                    return string.Join(Environment.NewLine, _recentOutput);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Gets the exit code of the last previewer process, if it has exited.
+        /// </summary>
+        public int? LastExitCode { get; private set; }
+
+        /// <summary>
+        /// Gets a value indicating whether the last exit was caused by <see cref="Stop"/>
+        /// rather than the host crashing or quitting on its own.
+        /// </summary>
+        public bool LastExitWasRequested { get; private set; }
 
         /// <summary>
         /// Gets a value indicating whether the previewer process is currently running.
@@ -163,29 +192,12 @@ namespace AvaloniaVS.Services
 
             _assemblyPath = assemblyPath;
             _executablePath = executablePath;
+            LastExitWasRequested = false;
+            LastExitCode = null;
             Error = null;
 
-            var port = FreeTcpPort();
             var tcs = new TaskCompletionSource<object>();
-
-            _listener = new BsonTcpTransport().Listen(
-                IPAddress.Loopback,
-                port,
-#pragma warning disable VSTHRD101
-                async t =>
-                {
-                    try
-                    {
-                        await ConnectionInitializedAsync(t);
-                        tcs.TrySetResult(null);
-                    }
-                    catch (Exception ex)
-                    {
-                        _log.Error(ex, "Error initializing connection");
-                        tcs.TrySetException(ex);
-                    }
-                });
-#pragma warning restore VSTHRD101
+            var port = ListenOnFreePort(tcs);
 
             var executableDir = Path.GetDirectoryName(_executablePath);
             var extensionDir = Path.GetDirectoryName(GetType().Assembly.Location);
@@ -230,7 +242,13 @@ namespace AvaloniaVS.Services
             _log.Information("Starting previewer process for '{ExecutablePath}'", _executablePath);
             _log.Debug("> {FileName} {Args}", processInfo.FileName, args);
 
+            lock (_recentOutput)
+            {
+                _recentOutput.Clear();
+            }
+
             var process = _process = Process.Start(processInfo);
+            ChildProcessJob.TryAssign(process, _log);
             process.EnableRaisingEvents = true;
             process.OutputDataReceived += OnProcessOutputReceived;
             process.ErrorDataReceived += OnProcessErrorReceived;
@@ -280,6 +298,7 @@ namespace AvaloniaVS.Services
             if (_process?.HasExited == false)
             {
                 _log.Debug("Killing previewer process");
+                LastExitWasRequested = true;
 
                 try
                 {
@@ -391,12 +410,13 @@ namespace AvaloniaVS.Services
             _connection.OnException += ConnectionExceptionReceived;
             _connection.OnMessage += ConnectionMessageReceived;
 
+            // Only advertise the format WPF can display directly. Rgba8888 used to be offered
+            // too, and was mapped to Pbgra32, which swapped the red and blue channels.
             await SendAsync(new ClientSupportedPixelFormatsMessage
             {
                 Formats = new[]
                 {
                     Avalonia.Remote.Protocol.Viewport.PixelFormat.Bgra8888,
-                    Avalonia.Remote.Protocol.Viewport.PixelFormat.Rgba8888,
                 }
             });
 
@@ -423,14 +443,36 @@ namespace AvaloniaVS.Services
                     {
                         await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
-                        if (_bitmap == null || _bitmap.PixelWidth != frame.Width || _bitmap.PixelHeight != frame.Height)
+                        if (Error != null)
+                        {
+                            // While the XAML is invalid the host only sends placeholder frames.
+                            // Don't write them into the bitmap, which may be the last good frame
+                            // the previewer is still showing; just acknowledge them.
+                            await SendAsync(new FrameReceivedMessage { SequenceId = frame.SequenceId });
+                            break;
+                        }
+
+                        var data = frame.Data;
+                        if (frame.Format == Avalonia.Remote.Protocol.Viewport.PixelFormat.Rgba8888 && data != null)
+                        {
+                            // Hosts should honour ClientSupportedPixelFormats, but convert
+                            // defensively rather than showing swapped colours.
+                            data = SwapRedBlue(data);
+                        }
+
+                        var wpfFormat = ToWpf(frame.Format);
+
+                        if (_bitmap == null ||
+                            _bitmap.PixelWidth != frame.Width ||
+                            _bitmap.PixelHeight != frame.Height ||
+                            _bitmap.Format != wpfFormat)
                         {
                             _bitmap = new WriteableBitmap(
                                 Math.Max(frame.Width, 1),
                                 Math.Max(frame.Height, 1),
                                 96,
                                 96,
-                                ToWpf(frame.Format),
+                                wpfFormat,
                                 null);
                         }
 
@@ -438,7 +480,7 @@ namespace AvaloniaVS.Services
                         {
                             _bitmap.WritePixels(
                                 new Int32Rect(0, 0, _bitmap.PixelWidth, _bitmap.PixelHeight),
-                                frame.Data,
+                                data,
                                 frame.Stride,
                                 0);
                         }
@@ -493,6 +535,7 @@ namespace AvaloniaVS.Services
             if (!string.IsNullOrWhiteSpace(e.Data))
             {
                 _log.Debug("<= {Data}", e.Data);
+                RecordOutput(e.Data);
             }
         }
 
@@ -500,13 +543,101 @@ namespace AvaloniaVS.Services
         {
             if (!string.IsNullOrWhiteSpace(e.Data))
             {
-                _log.Error("<= {Data}", e.Data);
+                // The host writes routine diagnostics to stderr too; real failures are
+                // reported through UpdateXamlResult or the exit code.
+                _log.Warning("<= {Data}", e.Data);
+                RecordOutput(e.Data);
             }
+        }
+
+        private void RecordOutput(string line)
+        {
+            lock (_recentOutput)
+            {
+                _recentOutput.Enqueue(line);
+                while (_recentOutput.Count > RecentOutputLines)
+                {
+                    _recentOutput.Dequeue();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Binds the BSON transport to a free loopback port. Picking a port and binding it
+        /// are separate steps, so another process can take the port in between; retry with a
+        /// new port when that happens.
+        /// </summary>
+        private int ListenOnFreePort(TaskCompletionSource<object> tcs)
+        {
+            const int attempts = 5;
+
+            for (var attempt = 1; ; attempt++)
+            {
+                var port = FreeTcpPort();
+
+                try
+                {
+                    _listener = new BsonTcpTransport().Listen(
+                        IPAddress.Loopback,
+                        port,
+#pragma warning disable VSTHRD101
+                        async t =>
+                        {
+                            try
+                            {
+                                await ConnectionInitializedAsync(t);
+                                tcs.TrySetResult(null);
+                            }
+                            catch (Exception ex)
+                            {
+                                _log.Error(ex, "Error initializing connection");
+                                tcs.TrySetException(ex);
+                            }
+                        });
+#pragma warning restore VSTHRD101
+                    return port;
+                }
+                catch (SocketException ex) when (attempt < attempts)
+                {
+                    _log.Debug(ex, "Port {Port} was taken before it could be bound; retrying", port);
+                }
+            }
+        }
+
+        private static byte[] SwapRedBlue(byte[] data)
+        {
+            var result = new byte[data.Length];
+            for (var i = 0; i + 3 < data.Length; i += 4)
+            {
+                result[i] = data[i + 2];
+                result[i + 1] = data[i + 1];
+                result[i + 2] = data[i];
+                result[i + 3] = data[i + 3];
+            }
+
+            return result;
         }
 
         private void OnProcessExited(object sender, EventArgs e)
         {
-            _log.Information("Process exited");
+            if (!ReferenceEquals(sender, _process))
+            {
+                // A previous host that was stopped before a restart exited late. Calling Stop()
+                // here would kill the new host, so ignore it.
+                _log.Debug("Ignoring exit of a previous previewer process");
+                return;
+            }
+
+            try
+            {
+                LastExitCode = ((Process)sender).ExitCode;
+            }
+            catch (InvalidOperationException)
+            {
+                LastExitCode = null;
+            }
+
+            _log.Information("Process exited with code {ExitCode}", LastExitCode);
             Stop();
             ProcessExited?.Invoke(this, EventArgs.Empty);
         }
@@ -625,7 +756,8 @@ namespace AvaloniaVS.Services
                 case Avalonia.Remote.Protocol.Viewport.PixelFormat.Rgb565:
                     return PixelFormats.Bgr565;
                 case Avalonia.Remote.Protocol.Viewport.PixelFormat.Rgba8888:
-                    return PixelFormats.Pbgra32;
+                    // Swizzled to BGRA in OnMessageAsync before being written.
+                    return PixelFormats.Bgra32;
                 default:
                     throw new NotSupportedException("Unsupported pixel format.");
             }

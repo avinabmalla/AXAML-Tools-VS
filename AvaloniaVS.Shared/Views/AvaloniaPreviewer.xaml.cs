@@ -7,7 +7,9 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
+using Avalonia.Remote.Protocol.Designer;
 using Avalonia.Remote.Protocol.Input;
+using AvaloniaVS.Models;
 using AvaloniaVS.Services;
 using EnvDTE;
 using Microsoft.VisualStudio.PlatformUI;
@@ -23,7 +25,20 @@ namespace AvaloniaVS.Views
         private PreviewerProcess _process;
         private bool _centerPreviewer;
         private Size _lastBitmapSize;
-        private WeakReference<BitmapSource> _lastBitmap = new(default);
+        // The last frame rendered without a markup error. Kept (strongly) so a typo in the
+        // XAML doesn't blank the preview: the old frame stays up under an error banner.
+        private BitmapSource _lastGoodBitmap;
+        private ExceptionDetails _markupError;
+
+        /// <summary>
+        /// Raised when the user asks to restart the previewer after it exited.
+        /// </summary>
+        public event EventHandler RestartRequested;
+
+        /// <summary>
+        /// Raised when the user clicks the location of a markup error.
+        /// </summary>
+        public event EventHandler<XamlErrorLocation> ErrorLocationRequested;
 
         public Project SelectedProject { get; set; }
         public AvaloniaPreviewer()
@@ -34,6 +49,8 @@ namespace AvaloniaVS.Views
             Loaded += AvaloniaPreviewer_Loaded;
 
             buildButton.Click += BuildButton_Click;
+            restartButton.Click += (_, _) => RestartRequested?.Invoke(this, EventArgs.Empty);
+            markupErrorLink.Click += MarkupErrorLink_Click;
             previewScroller.ScrollChanged += PreviewScroller_ScrollChanged;
 
             SizeChanged += (_, _) => _lastSize = default;
@@ -75,6 +92,82 @@ namespace AvaloniaVS.Views
                 }
 
                 Update(_process?.Bitmap);
+            }
+        }
+
+        /// <summary>
+        /// Shows an error that replaces the preview (no frame can be shown).
+        /// </summary>
+        public void ShowBlockingError(string heading, string message, bool showBuild, bool showRestart)
+        {
+            HideMarkupError();
+            errorHeading.Text = heading;
+            errorMessage.Text = message;
+            buildButton.Visibility = showBuild ? Visibility.Visible : Visibility.Collapsed;
+            restartButton.Visibility = showRestart ? Visibility.Visible : Visibility.Collapsed;
+            error.Visibility = Visibility.Visible;
+        }
+
+        /// <summary>
+        /// Shows a markup error as a banner over the last good frame.
+        /// </summary>
+        public void ShowMarkupError(ExceptionDetails details)
+        {
+            _markupError = details;
+
+            if (_lastGoodBitmap is null)
+            {
+                // Nothing rendered yet, so there is no frame to keep on screen.
+                ShowBlockingError(
+                    "Invalid Markup",
+                    details?.Message ?? "Check the Error List for more information.",
+                    showBuild: false,
+                    showRestart: false);
+                return;
+            }
+
+            error.Visibility = Visibility.Collapsed;
+            markupErrorMessage.Text = details?.Message ?? "Invalid markup. Check the Error List for more information.";
+
+            if (details?.LineNumber is int line && line > 0)
+            {
+                markupErrorLinkText.Text = details.LinePosition is int col && col > 0
+                    ? $"Line {line}, col {col}"
+                    : $"Line {line}";
+                markupErrorLocation.Visibility = Visibility.Visible;
+            }
+            else
+            {
+                markupErrorLocation.Visibility = Visibility.Collapsed;
+            }
+
+            markupError.Visibility = Visibility.Visible;
+            preview.Opacity = 0.5;
+        }
+
+        /// <summary>
+        /// Hides all error UI.
+        /// </summary>
+        public void HideErrors()
+        {
+            error.Visibility = Visibility.Collapsed;
+            HideMarkupError();
+        }
+
+        private void HideMarkupError()
+        {
+            _markupError = null;
+            markupError.Visibility = Visibility.Collapsed;
+            preview.Opacity = 1;
+        }
+
+        private void MarkupErrorLink_Click(object sender, RoutedEventArgs e)
+        {
+            if (_markupError?.LineNumber is int line && line > 0)
+            {
+                ErrorLocationRequested?.Invoke(
+                    this,
+                    new XamlErrorLocation(line, _markupError.LinePosition ?? 1));
             }
         }
 
@@ -147,9 +240,11 @@ namespace AvaloniaVS.Views
             {
                 return;
             }
-            if (bitmap is null)
+            // While the XAML has an error the host sends placeholder frames; keep showing the
+            // last good one instead.
+            if (Process.Error != null || bitmap is null)
             {
-                _lastBitmap.TryGetTarget(out bitmap);
+                bitmap = _lastGoodBitmap;
             }
 
             preview.Source = bitmap;
@@ -187,7 +282,10 @@ namespace AvaloniaVS.Views
                     _centerPreviewer = true;
                     _lastBitmapSize = new Size(preview.Width, preview.Height);
                 }
-                _lastBitmap.SetTarget(bitmap);
+                if (Process.Error == null)
+                {
+                    _lastGoodBitmap = bitmap;
+                }
             }
         }
 
