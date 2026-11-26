@@ -32,6 +32,13 @@ Set **AvaloniaVS.Vsix** as the startup project and press F5. That starts the [ex
 
 For problems inside Avalonia's previewer host itself, see Avalonia's guide on debugging the previewer.
 
+## Contributing
+
+This repository is source-available for transparency and so that you can fork it. It is **not open to contributions**.
+
+- Pull requests will be closed without review.
+- If you want to change something, fork the repository and maintain your own copy under the terms of the license.
+
 ## License
 
 MIT. See [license.md](license.md).

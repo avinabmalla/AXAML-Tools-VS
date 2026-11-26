@@ -1,6 +1,7 @@
 The MIT License (MIT)
 
 Copyright (c) 2014 Steven Kirk
+
 Copyright (c) 2026 Avinab Malla (modifications)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy

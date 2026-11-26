@@ -1,4 +1,4 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
+<?xml version="1.0" encoding="utf-8"?>
 <Project ToolsVersion="15.0" DefaultTargets="Build" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <PropertyGroup>
     <MinimumVisualStudioVersion>17.14</MinimumVisualStudioVersion>
@@ -72,12 +72,52 @@
       <SubType>Designer</SubType>
     </None>
   </ItemGroup>
+  <UsingTask TaskName="EnableTemplatesForVisualStudio" TaskFactory="RoslynCodeTaskFactory" AssemblyFile="$(MSBuildToolsPath)\Microsoft.Build.Tasks.Core.dll">
+    <ParameterGroup>
+      <Source ParameterType="System.String" Required="true" />
+      <Destination ParameterType="System.String" Required="true" />
+    </ParameterGroup>
+    <Task>
+      <Using Namespace="System.IO" />
+      <Using Namespace="System.IO.Compression" />
+      <Using Namespace="System.Text.RegularExpressions" />
+      <Code Type="Fragment" Language="cs"><![CDATA[
+        File.Copy(Source, Destination, true);
+        var pattern = new Regex(@",?\s*""unsupportedHosts""\s*:\s*\[[^\]]*\]");
+        int changed = 0;
+        using (var zip = ZipFile.Open(Destination, ZipArchiveMode.Update))
+        {
+          foreach (var entry in new System.Collections.Generic.List<ZipArchiveEntry>(zip.Entries))
+          {
+            if (!entry.FullName.EndsWith("ide.host.json", StringComparison.OrdinalIgnoreCase)) continue;
+            string text;
+            using (var reader = new StreamReader(entry.Open())) text = reader.ReadToEnd();
+            var updated = pattern.Replace(text, "");
+            if (updated == text) continue;
+            var name = entry.FullName;
+            entry.Delete();
+            using (var writer = new StreamWriter(zip.CreateEntry(name).Open())) writer.Write(updated);
+            changed++;
+          }
+        }
+        Log.LogMessage(MessageImportance.High, "Enabled " + changed + " Avalonia templates for Visual Studio.");
+      ]]></Code>
+    </Task>
+  </UsingTask>
   <Target Name="PreCreateVsixContainer" BeforeTargets="GetVsixSourceItems">
     <ItemGroup>
       <_TemplatePackage Include="$(NuGetPackageRoot)\$(AvaloniaTemplatesPackageName.ToLowerInvariant())\$(AvaloniaTemplatesPackageVersion)\$(AvaloniaTemplatesPackageName.ToLowerInvariant()).$(AvaloniaTemplatesPackageVersion).nupkg" />
     </ItemGroup>
     <Error Text="No template files found." Condition="@(_TemplatePackage-&gt;Count()) == 0" />
     <Message Text="Template nuget packages found: @(_TemplatePackage)" Importance="low" />
+    <!-- Avalonia's template pack marks every template "unsupportedHosts: vs", which hides them from
+         Visual Studio's New Project / Add New Item dialogs. Ship a copy with that entry removed. -->
+    <MakeDir Directories="$(IntermediateOutputPath)templates" />
+    <EnableTemplatesForVisualStudio Source="@(_TemplatePackage)" Destination="$(IntermediateOutputPath)templates\%(_TemplatePackage.Filename)%(_TemplatePackage.Extension)" />
+    <ItemGroup>
+      <_TemplatePackage Remove="@(_TemplatePackage)" />
+      <_TemplatePackage Include="$(IntermediateOutputPath)templates\*.nupkg" />
+    </ItemGroup>
   <!-- don't modify the following, the pkgdef file uses the path below -->
   <ItemGroup>
       <VSIXSourceItem Include="@(_TemplatePackage)">
