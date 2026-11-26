@@ -5,7 +5,7 @@ VisualStudioVersion = 17.0.31919.166
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "templates", "templates", "{FC634911-168A-4FDD-8758-11FAD5B8696B}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AvaloniaVS.VS2022", "AvaloniaVS.VS2022\AvaloniaVS.VS2022.csproj", "{1029EC08-7B2E-4018-B20D-E85CA58DEB59}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "AvaloniaVS.Vsix", "AvaloniaVS.Vsix\AvaloniaVS.Vsix.csproj", "{1029EC08-7B2E-4018-B20D-E85CA58DEB59}"
 EndProject
 Project("{D954291E-2A0B-460D-934E-DC6B0785DB48}") = "AvaloniaVS.Shared", "AvaloniaVS.Shared\AvaloniaVS.Shared.shproj", "{40D9809E-D179-44B2-BF42-61D781FB74F6}"
 EndProject

@@ -1,33 +1,37 @@
-> [!IMPORTANT]  
-> This branch contains an archive of the old version of the Avalonia Extension for Visual Studio.  
-> The code here is no longer supported or maintained. The repository remains as a public location for issues and discussions.  
-> A new and improved version of the extension is available as part of [Avalonia Accelerate](https://avaloniaui.net/accelerate)
+# Avalonia XAML Tools (Community)
 
----
+A community-maintained fork of the MIT-licensed [AvaloniaVS](https://github.com/AvaloniaUI/AvaloniaVS) extension (from its `ARCHIVE` branch). It is **not** an official Avalonia product. The official extension now ships as part of [Avalonia Accelerate](https://avaloniaui.net/accelerate).
 
-[![2022 marketplace](https://img.shields.io/visual-studio-marketplace/v/AvaloniaTeam.AvaloniaVS.svg?label=2022-Marketplace)](https://marketplace.visualstudio.com/items?itemName=AvaloniaTeam.AvaloniaVS)
-# Avalonia for Visual Studio
-This repository is used to generate Avalonia Visual Studio extensions.
-Avalonia Visual Studio extension adds such capabilities to your Visual Studio:
-- XAML code completion.
-- XAML previewer.
-- It bundles Avalonia templates in your Visual Studio.
-- Icons for axaml files.
+What it adds to Visual Studio:
+- XAML previewer for `.axaml` files
+- XAML IntelliSense and error tagging
+- Avalonia project templates and snippets
 
-### VSIX packages for Visual Studio
+**Targets:** Visual Studio 2022 17.14+ and Visual Studio 2026 (18.x), x64 and Arm64; Avalonia 11.x and 12.x.
 
-[Avalonia for Visual Studio 2022](https://marketplace.visualstudio.com/items?itemName=AvaloniaTeam.AvaloniaVS)
+It has its own VSIX identity and package GUIDs, so it doesn't collide with the official extension. Don't enable both at once: they register editors for the same file types.
 
-For VS2017 and VS2019 you need to download another plugin [Avalonia for Visual Studio 2019](https://marketplace.visualstudio.com/items?itemName=AvaloniaTeam.AvaloniaforVisualStudio)
-- Latest Release supporting VS2019 is **11.5**
-- Latest Release supporting VS2017 is **11.2**
+The fork collects no usage data. The original extension's analytics service has been removed.
 
-If you are interested in VSCode extension, visit https://github.com/AvaloniaUI/AvaloniaVSCode.
+See [Plan.md](Plan.md) for the roadmap.
 
-# Debugging
-If you want to debug Avalonia previewer extension the *easiest* way to do that is [VS Experimental instance](https://docs.microsoft.com/en-us/visualstudio/extensibility/the-experimental-instance?view=vs-2019).
-To run it you simply need to set **AvaloniaVS.csproj** as startup project and run it,it will open VS Experimental instance,you can run here your repro and put the breakpoints in the original VS in AvaloniaVS project.
+## Building
 
-**Note:**
+Requirements: Visual Studio 2022 17.14+ or 2026 with the **Visual Studio extension development** workload, plus the .NET 8 and .NET 10 SDKs.
 
-This way to debug application will only help you if your issue is directly in AvaloniaVS project,if your issue is somewhere in Avalonia code,but it is reproducible only with Avalonia Previewer please consider this article - [https://docs.avaloniaui.net/docs/0.10.x/guides/developer-guides/debugging-previewer](https://docs.avaloniaui.net/docs/0.10.x/guides/developer-guides/debugging-previewer)
+```powershell
+msbuild AvaloniaVS.sln -restore -p:Configuration=Release
+dotnet test tests/CompletionEngineTests
+```
+
+The VSIX ends up at `AvaloniaVS.Vsix/bin/Release/AvaloniaVS.Vsix.vsix`.
+
+## Debugging
+
+Set **AvaloniaVS.Vsix** as the startup project and press F5. That starts the [experimental instance](https://learn.microsoft.com/visualstudio/extensibility/the-experimental-instance) (`/rootsuffix Exp`). Open an Avalonia project there and set breakpoints in this solution.
+
+For problems inside Avalonia's previewer host itself, see Avalonia's guide on debugging the previewer.
+
+## License
+
+MIT. See [license.md](license.md).

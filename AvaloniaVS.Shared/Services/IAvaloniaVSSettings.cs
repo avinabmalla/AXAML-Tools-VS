@@ -14,6 +14,5 @@ namespace AvaloniaVS.Services
         string ZoomLevel { get; set; }
         void Save();
         void Load();
-        bool UsageTracking { get; set; }
     }
 }

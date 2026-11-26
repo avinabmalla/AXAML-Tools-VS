@@ -1,0 +1,39 @@
+name: Build
+
+on:
+  push:
+    branches: [ modernize, main ]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            10.0.x
+
+      - name: Test completion engine (Avalonia 12)
+        run: dotnet test tests/CompletionEngineTests/CompletionEngineTests.csproj -c Release --logger trx
+
+      - name: Test completion engine (Avalonia 11)
+        run: dotnet test tests/CompletionEngineTests/CompletionEngineTests.csproj -c Release -p:AvaloniaVersion=11.3.0 --logger trx
+
+      - uses: microsoft/setup-msbuild@v2
+        with:
+          vs-prerelease: true
+
+      - name: Build VSIX
+        run: msbuild AvaloniaVS.sln -restore -p:Configuration=Release -m
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vsix
+          path: |
+            AvaloniaVS.Vsix/bin/Release/*.vsix
+            AvaloniaVS.Vsix/bin/Release/publishManifest.json
+            AvaloniaVS.Vsix/bin/Release/overview.md

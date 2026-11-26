@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -70,6 +70,14 @@ namespace CompletionEngineTests
 
     public class XamlCompletionTestBase
     {
+        /// <summary>
+        /// The tests run against whatever Avalonia version $(AvaloniaVersion) selects.
+        /// Avalonia 12 adds public API (e.g. the :empty pseudo-class and CommandBar),
+        /// which changes some completion lists.
+        /// </summary>
+        public static bool IsAvalonia12OrLater { get; } =
+            typeof(global::Avalonia.Controls.Button).Assembly.GetName().Version!.Major >= 12;
+
         private static readonly string Prologue = @"<UserControl xmlns='https://github.com/avaloniaui'
         xmlns:x='http://schemas.microsoft.com/winfx/2006/xaml'
         xmlns:mc='http://schemas.openxmlformats.org/markup-compatibility/2006'

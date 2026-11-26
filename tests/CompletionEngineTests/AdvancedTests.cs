@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Linq;
 using Xunit;
@@ -511,7 +511,7 @@ namespace CompletionEngineTests
                 """;
             var compl = GetCompletionsFor(xaml).Completions;
 
-            Assert.Equal(10, compl.Count);
+            Assert.Equal(IsAvalonia12OrLater ? 11 : 10, compl.Count);
             Assert.Contains(compl, v => v.InsertText == ":disabled");
         }
 
@@ -532,11 +532,9 @@ namespace CompletionEngineTests
         [Fact]
         public void ControlTheme_Nested_Selector_Should_Be_Completed_Setter()
         {
-            string[] expected = new[]
-                {
-                "Command",
-                "CommandParameter",
-                };
+            string[] expected = IsAvalonia12OrLater
+                ? new[] { "Command", "CommandParameter", "CommandBar" }
+                : new[] { "Command", "CommandParameter" };
 
             var xaml =
                 """
@@ -594,6 +592,11 @@ namespace CompletionEngineTests
                 new Avalonia.Ide.CompletionEngine.Completion[]
                 {
                     new (":disabled", Avalonia.Ide.CompletionEngine.CompletionKind.Selector | Avalonia.Ide.CompletionEngine.CompletionKind.Enum),
+                }.Concat(IsAvalonia12OrLater
+                    ? new Avalonia.Ide.CompletionEngine.Completion[] { new (":empty", Avalonia.Ide.CompletionEngine.CompletionKind.Selector | Avalonia.Ide.CompletionEngine.CompletionKind.Enum) }
+                    : System.Array.Empty<Avalonia.Ide.CompletionEngine.Completion>())
+                .Concat(new Avalonia.Ide.CompletionEngine.Completion[]
+                {
                     new (":flyout-open", Avalonia.Ide.CompletionEngine.CompletionKind.Selector | Avalonia.Ide.CompletionEngine.CompletionKind.Enum),
                     new (":focus", Avalonia.Ide.CompletionEngine.CompletionKind.Selector | Avalonia.Ide.CompletionEngine.CompletionKind.Enum),
                     new (":focus-visible", Avalonia.Ide.CompletionEngine.CompletionKind.Selector | Avalonia.Ide.CompletionEngine.CompletionKind.Enum),
@@ -603,7 +606,7 @@ namespace CompletionEngineTests
                     new (":nth-last-child()", ":nth-last-child(", Avalonia.Ide.CompletionEngine.CompletionKind.Selector | Avalonia.Ide.CompletionEngine.CompletionKind.Enum),
                     new (":pointerover", Avalonia.Ide.CompletionEngine.CompletionKind.Selector | Avalonia.Ide.CompletionEngine.CompletionKind.Enum),
                     new (":pressed", Avalonia.Ide.CompletionEngine.CompletionKind.Selector | Avalonia.Ide.CompletionEngine.CompletionKind.Enum),
-                },
+                }).ToArray(),
             };
             yield return new object[]
             {

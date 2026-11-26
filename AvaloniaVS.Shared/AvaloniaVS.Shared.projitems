@@ -34,7 +34,6 @@
     <Compile Include="$(MSBuildThisFileDirectory)Models\XamlBufferMetadata.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)ProjectSystem\AvaloniaProject.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)ServiceProviderExtensions.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)Services\AnalyticsService.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Services\AvaloniaVSSettings.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Services\EditorFactory.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Services\IAvaloniaVSSettings.cs" />

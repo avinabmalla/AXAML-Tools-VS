@@ -9,7 +9,7 @@ namespace AvaloniaVS.Views
 {
     [ClassInterface(ClassInterfaceType.AutoDual)]
     [ComVisible(true)]
-    [Guid("3093ca7c-c764-4547-a7ae-12055b139bdf")]
+    [Guid("6080d841-a34e-4192-bf9c-bfa8b20573b9")]
     public class OptionsDialogPage : UIElementDialogPage
     {
         private OptionsView _options;

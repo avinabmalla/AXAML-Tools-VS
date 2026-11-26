@@ -1,4 +1,4 @@
-using System.Linq;
+﻿using System.Linq;
 using Xunit;
 
 namespace CompletionEngineTests
@@ -159,10 +159,12 @@ namespace CompletionEngineTests
         {
             var compl = GetCompletionsFor("<Style Se");
 
-            Assert.Equal(3, compl.Completions.Count);
+            // Avalonia 12 adds one more matching type; the sort order of the known items must hold.
+            Assert.Equal(IsAvalonia12OrLater ? 4 : 3, compl.Completions.Count);
             Assert.Equal("Selector", compl.Completions[0].DisplayText);
-            Assert.Equal("SelectableTextBlock", compl.Completions[1].DisplayText);
-            Assert.Equal("SelectingItemsControl", compl.Completions[2].DisplayText);
+            var names = compl.Completions.Select(c => c.DisplayText).ToList();
+            Assert.True(names.IndexOf("SelectableTextBlock") > 0);
+            Assert.True(names.IndexOf("SelectingItemsControl") > names.IndexOf("SelectableTextBlock"));
         }
 
         [Fact]

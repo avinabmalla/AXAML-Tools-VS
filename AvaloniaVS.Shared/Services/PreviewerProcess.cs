@@ -199,12 +199,14 @@ namespace AvaloniaVS.Services
 
                 EnsureExists(runtimeConfigPath);
                 EnsureExists(depsPath);
+                var dotnetHost = ResolveDotnetHost();
+                EnsureRuntimeInstalled(dotnetHost, runtimeConfigPath);
                 args = $@"exec --runtimeconfig ""{runtimeConfigPath}"" --depsfile ""{depsPath}"" ""{hostAppPath}"" --transport tcp-bson://127.0.0.1:{port}/ ""{_executablePath}""";
                 processInfo = new ProcessStartInfo
                 {
                     Arguments = args,
                     CreateNoWindow = true,
-                    FileName = "dotnet",
+                    FileName = dotnetHost,
                     RedirectStandardOutput = true,
                     RedirectStandardError = true,
                     UseShellExecute = false,
@@ -226,7 +228,7 @@ namespace AvaloniaVS.Services
             }
 
             _log.Information("Starting previewer process for '{ExecutablePath}'", _executablePath);
-            _log.Debug("> dotnet.exe {Args}", args);
+            _log.Debug("> {FileName} {Args}", processInfo.FileName, args);
 
             var process = _process = Process.Start(processInfo);
             process.EnableRaisingEvents = true;
@@ -514,6 +516,81 @@ namespace AvaloniaVS.Services
             if (!File.Exists(path))
             {
                 throw new FileNotFoundException($"Could not find '{path}'.");
+            }
+        }
+
+        /// <summary>
+        /// Finds the dotnet host to launch the previewer with. Prefers the host Visual Studio's
+        /// own .NET tooling uses (DOTNET_HOST_PATH / DOTNET_ROOT), then the default install
+        /// location, and only then falls back to whatever "dotnet" resolves to on PATH.
+        /// </summary>
+        internal static string ResolveDotnetHost()
+        {
+            var hostPath = Environment.GetEnvironmentVariable("DOTNET_HOST_PATH");
+            if (!string.IsNullOrEmpty(hostPath) && File.Exists(hostPath))
+            {
+                return hostPath;
+            }
+
+            foreach (var variable in new[] { "DOTNET_ROOT", "DOTNET_ROOT(x64)" })
+            {
+                var root = Environment.GetEnvironmentVariable(variable);
+                if (!string.IsNullOrEmpty(root))
+                {
+                    var candidate = Path.Combine(root, "dotnet.exe");
+                    if (File.Exists(candidate))
+                    {
+                        return candidate;
+                    }
+                }
+            }
+
+            var programFiles = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+            var defaultHost = Path.Combine(programFiles, "dotnet", "dotnet.exe");
+            return File.Exists(defaultHost) ? defaultHost : "dotnet";
+        }
+
+        /// <summary>
+        /// Avalonia 12 apps target net10.0. If the shared runtime named in the app's
+        /// runtimeconfig.json isn't installed, the host exits immediately with a message
+        /// that only shows in the output pane, so check up front and say what is missing.
+        /// </summary>
+        private static void EnsureRuntimeInstalled(string dotnetHost, string runtimeConfigPath)
+        {
+            if (!Path.IsPathRooted(dotnetHost))
+            {
+                return; // Resolved via PATH; we can't locate the shared folder reliably.
+            }
+
+            string json;
+            try
+            {
+                json = File.ReadAllText(runtimeConfigPath);
+            }
+            catch (IOException)
+            {
+                return;
+            }
+
+            var match = System.Text.RegularExpressions.Regex.Match(
+                json,
+                @"""name""\s*:\s*""(?<name>Microsoft\.[A-Za-z.]+App)""\s*,\s*""version""\s*:\s*""(?<major>\d+)\.");
+
+            if (!match.Success)
+            {
+                return;
+            }
+
+            var name = match.Groups["name"].Value;
+            var major = match.Groups["major"].Value;
+            var sharedDir = Path.Combine(Path.GetDirectoryName(dotnetHost), "shared", name);
+
+            if (!Directory.Exists(sharedDir) ||
+                Directory.GetDirectories(sharedDir, major + ".*").Length == 0)
+            {
+                throw new InvalidOperationException(
+                    $"The previewer needs the .NET {major} runtime ({name}), but it isn't installed for '{dotnetHost}'. " +
+                    $"Install the .NET {major} SDK or runtime, then reopen this file.");
             }
         }
 

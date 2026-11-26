@@ -1,23 +1,25 @@
 <?xml version="1.0" encoding="utf-8"?>
 <PackageManifest Version="2.0.0" xmlns="http://schemas.microsoft.com/developer/vsx-schema/2011" xmlns:d="http://schemas.microsoft.com/developer/vsx-schema-design/2011">
     <Metadata>
-        <Identity Id="AvaloniaVS" Version="11.9" Language="en-US" Publisher="Avalonia Team" />
-        <DisplayName>Avalonia for Visual Studio 2022</DisplayName>
-        <Description xml:space="preserve">Previewer and templates for Avalonia applications and libraries.</Description>
+        <Identity Id="AvaloniaXamlTools.Community.9b1f4c2e-5d7a-4e0b-8c3f-2a6d1e8f7b40" Version="12.0.0" Language="en-US" Publisher="Avinab Malla" />
+        <DisplayName>Avalonia XAML Tools (Community)</DisplayName>
+        <Description xml:space="preserve">Community-maintained XAML previewer, IntelliSense, event handler generation and navigation for Avalonia 11 and 12 in Visual Studio 2022 and 2026. Based on the MIT-licensed AvaloniaVS extension.</Description>
+        <License>license.md</License>
         <Icon>icon.ico</Icon>
+        <Tags>Avalonia, XAML, axaml, previewer, designer</Tags>
     </Metadata>
     <Installation>
-        <InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[17.0, 18.0)">
+        <InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[17.14, 19.0)">
             <ProductArchitecture>amd64</ProductArchitecture>
         </InstallationTarget>
-        <InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[17.0, 18.0)">
+        <InstallationTarget Id="Microsoft.VisualStudio.Community" Version="[17.14, 19.0)">
             <ProductArchitecture>arm64</ProductArchitecture>
         </InstallationTarget>
     </Installation>
     <Prerequisites>
-        <Prerequisite Id="Microsoft.VisualStudio.Component.CoreEditor" Version="[15.0,)" DisplayName="Visual Studio core editor" />
-        <Prerequisite Id="Microsoft.NetCore.Component.DevelopmentTools" Version="[15.8.27729.1,18.0)" DisplayName=".NET Core development tools" />
-        <Prerequisite Id="Microsoft.VisualStudio.Component.Roslyn.LanguageServices" Version="[15.0.26208.0,18.0)" DisplayName="C# and Visual Basic" />
+        <Prerequisite Id="Microsoft.VisualStudio.Component.CoreEditor" Version="[17.0,)" DisplayName="Visual Studio core editor" />
+        <Prerequisite Id="Microsoft.NetCore.Component.DevelopmentTools" Version="[17.0,)" DisplayName=".NET Core development tools" />
+        <Prerequisite Id="Microsoft.VisualStudio.Component.Roslyn.LanguageServices" Version="[17.0,)" DisplayName="C# and Visual Basic" />
     </Prerequisites>
     <Assets>
         <Asset Type="Microsoft.VisualStudio.VsPackage" d:Source="Project" d:ProjectName="%CurrentProject%" Path="|%CurrentProject%;PkgdefProjectOutputGroup|" />
