@@ -35,6 +35,18 @@ namespace AvaloniaVS.Services
         private IDisposable _listener;
         private WriteableBitmap _bitmap;
         private ExceptionDetails _error;
+
+        // Picking: a hidden render of an ID-coloured copy of the XAML (see CapturePickFrameAsync).
+        private enum PickState { None, AwaitingPickResult, AwaitingPickFrame, AwaitingRestoreResult }
+
+        private PickState _pickState;
+        private TaskCompletionSource<PickFrame> _pick;
+        private string _currentXaml;
+
+        // The size the host last asked for (RequestViewportResizeMessage), and what we last
+        // allocated (size and DPI), so we only answer when something actually changed.
+        private (double Width, double Height)? _requestedViewport;
+        private (double Width, double Height, double Dpi)? _allocatedViewport;
         private const int RecentOutputLines = 20;
         private readonly Queue<string> _recentOutput = new Queue<string>();
 
@@ -284,6 +296,10 @@ namespace AvaloniaVS.Services
             _log.Verbose("Started PreviewerProcess.Stop()");
             _log.Information("Stopping previewer process");
 
+            // A new host process needs its viewport allocated again.
+            _requestedViewport = null;
+            _allocatedViewport = null;
+
             _listener?.Dispose();
             _listener = null;
 
@@ -334,7 +350,42 @@ namespace AvaloniaVS.Services
                         DpiX = 96 * _scaling,
                         DpiY = 96 * _scaling,
                     });
+
+                    await SendViewportAllocatedAsync();
                 }
+            }
+        }
+
+        /// <summary>
+        /// Tells the host the viewport it asked for is allocated, at our real DPI. Without this the
+        /// host has no viewport DPI and falls back to 96, so at display scaling other than 100% it
+        /// placed popups (menus, combo box dropdowns) with a different scale than it rendered
+        /// with, and the mouse no longer lined up inside them.
+        /// </summary>
+        /// <remarks>
+        /// Only sent when the size or DPI differs from the last allocation: the host asks again
+        /// after every allocation, so answering every request loops forever (hundreds of resizes
+        /// a second), re-laying out the preview constantly, which closed menus and made input
+        /// unreliable.
+        /// </remarks>
+        private async Task SendViewportAllocatedAsync()
+        {
+            if (_requestedViewport is { } size)
+            {
+                var allocation = (size.Width, size.Height, 96 * _scaling);
+                if (_allocatedViewport == allocation)
+                {
+                    return;
+                }
+
+                _allocatedViewport = allocation;
+                await SendAsync(new ClientViewportAllocatedMessage
+                {
+                    Width = size.Width,
+                    Height = size.Height,
+                    DpiX = 96 * _scaling,
+                    DpiY = 96 * _scaling,
+                });
             }
         }
 
@@ -355,11 +406,74 @@ namespace AvaloniaVS.Services
                 throw new InvalidOperationException("Process not finished initializing.");
             }
 
+            _currentXaml = xaml;
+
+            // While a pick is in flight the host is showing the ID render; the restore at the end
+            // of the pick sends this newest XAML.
+            if (_pickState != PickState.None)
+            {
+                return;
+            }
+
             await SendAsync(new UpdateXamlMessage
             {
                 AssemblyPath = _assemblyPath,
                 Xaml = xaml,
             });
+        }
+
+        /// <summary>A captured frame: 32-bit BGRA pixels.</summary>
+        public sealed class PickFrame
+        {
+            public int Width { get; set; }
+
+            public int Height { get; set; }
+
+            public int Stride { get; set; }
+
+            public byte[] Data { get; set; }
+        }
+
+        /// <summary>
+        /// Renders <paramref name="pickXaml"/> without showing it, returns that frame, then restores
+        /// the real XAML. Returns null if the host can't render it (or doesn't within the timeout).
+        /// Error state and the visible preview are left untouched throughout.
+        /// </summary>
+        public async Task<PickFrame> CapturePickFrameAsync(string pickXaml, TimeSpan timeout)
+        {
+            if (!IsReady || _pickState != PickState.None || _currentXaml is null)
+            {
+                return null;
+            }
+
+            var pick = new TaskCompletionSource<PickFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
+            _pick = pick;
+            _pickState = PickState.AwaitingPickResult;
+
+            try
+            {
+                await SendAsync(new UpdateXamlMessage { AssemblyPath = _assemblyPath, Xaml = pickXaml });
+                var finished = await Task.WhenAny(pick.Task, Task.Delay(timeout));
+                return finished == pick.Task ? pick.Task.Result : null;
+            }
+            finally
+            {
+                // Restore the real XAML. Frames are suppressed until its result arrives, so the
+                // ID render never shows; a safety timer ends the suppression if that never comes.
+                _pick = null;
+                _pickState = PickState.AwaitingRestoreResult;
+                await SendAsync(new UpdateXamlMessage { AssemblyPath = _assemblyPath, Xaml = _currentXaml });
+
+                _ = Task.Delay(TimeSpan.FromSeconds(3)).ContinueWith(
+                    _ =>
+                    {
+                        if (_pickState == PickState.AwaitingRestoreResult)
+                        {
+                            _pickState = PickState.None;
+                        }
+                    },
+                    TaskScheduler.Default);
+            }
         }
 
         /// <summary>
@@ -443,6 +557,33 @@ namespace AvaloniaVS.Services
                     {
                         await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
 
+                        if (_pickState == PickState.AwaitingPickFrame && _pick is { } pick)
+                        {
+                            // The ID render: hand it to the picker, never to the visible bitmap.
+                            var pixels = frame.Data;
+                            if (frame.Format == Avalonia.Remote.Protocol.Viewport.PixelFormat.Rgba8888 && pixels != null)
+                            {
+                                pixels = SwapRedBlue(pixels);
+                            }
+
+                            pick.TrySetResult(new PickFrame
+                            {
+                                Width = frame.Width,
+                                Height = frame.Height,
+                                Stride = frame.Stride,
+                                Data = pixels is null ? null : (byte[])pixels.Clone(),
+                            });
+                            await SendAsync(new FrameReceivedMessage { SequenceId = frame.SequenceId });
+                            break;
+                        }
+
+                        if (_pickState != PickState.None)
+                        {
+                            // Frames while switching to or from the ID render aren't shown.
+                            await SendAsync(new FrameReceivedMessage { SequenceId = frame.SequenceId });
+                            break;
+                        }
+
                         if (Error != null)
                         {
                             // While the XAML is invalid the host only sends placeholder frames.
@@ -493,8 +634,38 @@ namespace AvaloniaVS.Services
                         });
                         break;
                     }
+                case RequestViewportResizeMessage resize:
+                    {
+                        _requestedViewport = (resize.Width, resize.Height);
+                        await SendViewportAllocatedAsync();
+                        break;
+                    }
+
+                case UpdateXamlResultMessage update when _pickState == PickState.AwaitingPickResult:
+                    {
+                        // The ID render loaded (or failed to): don't touch the visible error state.
+                        var failed = update.Exception != null || !string.IsNullOrWhiteSpace(update.Error);
+                        if (failed)
+                        {
+                            _log.Debug("Picking render failed: {Error}", update.Exception?.Message ?? update.Error);
+                            _pick?.TrySetResult(null);
+                        }
+                        else
+                        {
+                            _pickState = PickState.AwaitingPickFrame;
+                        }
+
+                        break;
+                    }
+
                 case UpdateXamlResultMessage update:
                     {
+                        if (_pickState == PickState.AwaitingRestoreResult)
+                        {
+                            // The real XAML is back: show frames again.
+                            _pickState = PickState.None;
+                        }
+
                         var exception = update.Exception;
 
                         if (exception == null && !string.IsNullOrWhiteSpace(update.Error))

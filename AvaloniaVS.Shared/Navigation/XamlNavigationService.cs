@@ -31,7 +31,8 @@ namespace AvaloniaVS.Navigation
         public static XamlNavigationTarget Classify(ITextView view, SnapshotPoint point)
         {
             var buffer = point.Snapshot.TextBuffer;
-            var text = point.Snapshot.GetText();
+            var document = IntelliSense.XamlDocumentCache.Get(point.Snapshot);
+            var text = document.Text;
             CompletionEngine.MetadataHelper helper = null;
 
             if (buffer.Properties.TryGetProperty(typeof(XamlBufferMetadata), out XamlBufferMetadata metadata) &&
@@ -42,7 +43,7 @@ namespace AvaloniaVS.Navigation
                 helper.SetMetadata(completionMetadata, text, assemblyName);
             }
 
-            return XamlNavigationClassifier.Classify(text, point.Position, helper);
+            return XamlNavigationClassifier.Classify(document, point.Position, helper);
         }
 
         /// <summary>Navigates to <paramref name="target"/>. Reports failures in the status bar.</summary>
@@ -59,6 +60,29 @@ namespace AvaloniaVS.Navigation
             {
                 Log.Logger.Error(ex, "XAML navigation failed for {Target}", target);
                 await NavigationHelper.SetStatusAsync($"Couldn't navigate to '{target.Text}': {ex.Message}");
+            }
+        }
+
+        /// <summary>Shift+F12: lists definitions and usages (C# and XAML) in the references window.</summary>
+        public static async Task FindAllReferencesAsync(ITextView view, XamlNavigationTarget target, CancellationToken cancellationToken)
+        {
+            try
+            {
+                await NavigationHelper.SetStatusAsync($"Finding references to '{target.Text}'\u2026");
+                var locations = await XamlLocationService.FindReferencesAsync(view, target, cancellationToken);
+                if (locations.Count == 0)
+                {
+                    await NavigationHelper.SetStatusAsync($"No references to '{target.Text}' were found.");
+                    return;
+                }
+
+                await ReferencesWindow.ShowAsync($"'{target.Text}' references", locations);
+                await NavigationHelper.SetStatusAsync($"{locations.Count} result(s) for '{target.Text}'.");
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException)
+            {
+                Log.Logger.Error(ex, "Find All References failed for {Target}", target);
+                await NavigationHelper.SetStatusAsync($"Couldn't find references to '{target.Text}': {ex.Message}");
             }
         }
 
@@ -152,15 +176,19 @@ namespace AvaloniaVS.Navigation
                     implementations.AddRange(await SymbolFinder.FindOverridesAsync(member, context.Solution, cancellationToken: ct));
                 }
 
-                var target = implementations.FirstOrDefault(s => s.Locations.Any(l => l.IsInSource));
-                if (target != null)
+                var inSource = implementations.Where(s => s.Locations.Any(l => l.IsInSource)).ToList();
+                if (inSource.Count == 1)
                 {
-                    if (implementations.Count > 1)
-                    {
-                        await NavigationHelper.SetStatusAsync($"{implementations.Count} implementations of '{member.Name}'; showing the first.");
-                    }
+                    return await NavigationHelper.GoToSymbolAsync(context, inSource[0], ct);
+                }
 
-                    return await NavigationHelper.GoToSymbolAsync(context, target, ct);
+                if (inSource.Count > 1)
+                {
+                    // Several: let the user pick from the results window.
+                    await ReferencesWindow.ShowAsync(
+                        $"Implementations of '{member.Name}'",
+                        XamlLocationService.SourceDefinitions(context, inSource.ToArray()));
+                    return true;
                 }
             }
 
@@ -181,7 +209,11 @@ namespace AvaloniaVS.Navigation
 
             if (inSource.Count > 1)
             {
-                await NavigationHelper.SetStatusAsync($"{inSource.Count} types derive from '{type.Name}'; showing the first.");
+                // Several: let the user pick from the results window.
+                await ReferencesWindow.ShowAsync(
+                    type.TypeKind == TypeKind.Interface ? $"Implementations of '{type.Name}'" : $"Types deriving from '{type.Name}'",
+                    XamlLocationService.SourceDefinitions(context, inSource.ToArray()));
+                return true;
             }
 
             return await NavigationHelper.GoToSymbolAsync(context, inSource[0], ct);
@@ -191,7 +223,7 @@ namespace AvaloniaVS.Navigation
         /// Finds what a XAML property name refers to. CLR properties come first; for attached
         /// properties the registration field (<c>RowProperty</c>) is more useful than the accessors.
         /// </summary>
-        private static ISymbol FindPropertyLike(INamedTypeSymbol owner, string name, bool attached)
+        internal static ISymbol FindPropertyLike(INamedTypeSymbol owner, string name, bool attached)
         {
             IEnumerable<string> candidates = attached
                 ? new[] { name + "Property", name + "Event", "Get" + name, name }
@@ -285,10 +317,8 @@ namespace AvaloniaVS.Navigation
                     return await NavigationHelper.OpenAtAsync(usage);
                 }
 
-                if (declared != null)
-                {
-                    return await NavigationHelper.OpenAtAsync(declared);
-                }
+                // Only declared in generated code: don't send the user there (the XAML is the
+                // real declaration).
             }
 
             // From a binding's #name: jump to the element that declares it.
@@ -302,6 +332,13 @@ namespace AvaloniaVS.Navigation
                 return true;
             }
 
+            if (attribute != null)
+            {
+                // Already on the declaration and nothing in code uses it.
+                await NavigationHelper.SetStatusAsync($"'{target.MemberName}' is declared here and isn't used in code yet.");
+                return true;
+            }
+
             return false;
         }
 
@@ -309,7 +346,7 @@ namespace AvaloniaVS.Navigation
         /// Walks a binding path from its data type. A <c>FooCommand</c> generated by
         /// CommunityToolkit's <c>[RelayCommand]</c> resolves to the <c>Foo</c> method.
         /// </summary>
-        private static ISymbol ResolveBindingPath(XamlRoslynContext context, XamlNavigationTarget target)
+        internal static ISymbol ResolveBindingPath(XamlRoslynContext context, XamlNavigationTarget target)
         {
             ITypeSymbol current = context.GetType(target.DataTypeName);
             ISymbol member = null;
@@ -447,14 +484,14 @@ namespace AvaloniaVS.Navigation
             return File.Exists(path) && await NavigationHelper.OpenAtAsync(path, 0);
         }
 
-        private static async Task<string> GetProjectDirectoryAsync(string xamlPath)
+        internal static async Task<string> GetProjectDirectoryAsync(string xamlPath)
         {
             var workspace = await XamlRoslynContext.GetWorkspaceAsync();
             var project = XamlRoslynContext.FindProject(workspace.CurrentSolution, xamlPath);
             return project?.FilePath is { } path ? Path.GetDirectoryName(path) : null;
         }
 
-        private static IEnumerable<string> EnumerateXamlFiles(string root)
+        internal static IEnumerable<string> EnumerateXamlFiles(string root)
         {
             var pending = new Stack<string>();
             pending.Push(root);

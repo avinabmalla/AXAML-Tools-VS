@@ -41,7 +41,11 @@ namespace AvaloniaVS.Navigation
 
         public static async Task<VisualStudioWorkspace> GetWorkspaceAsync()
         {
-            var componentModel = (IComponentModel)await AsyncServiceProvider.GlobalProvider.GetServiceAsync(typeof(SComponentModel));
+            if (await AsyncServiceProvider.GlobalProvider.GetServiceAsync(typeof(SComponentModel)) is not IComponentModel componentModel)
+            {
+                throw new InvalidOperationException("The component model service isn't available.");
+            }
+
             return componentModel.GetService<VisualStudioWorkspace>();
         }
 
@@ -68,6 +72,72 @@ namespace AvaloniaVS.Navigation
 
             var compilation = await project.GetCompilationAsync(cancellationToken).ConfigureAwait(false);
             return compilation is null ? null : new XamlRoslynContext(workspace, project, compilation, xamlPath);
+        }
+
+        /// <summary>
+        /// Creates a context only if Roslyn already has the project's compilation cached, without
+        /// blocking (for use while typing, e.g. in completion). Otherwise starts building it in the
+        /// background, so a later call can succeed, and returns null.
+        /// </summary>
+        public static XamlRoslynContext TryCreateFromCache(string xamlPath) => TryCreateQuickly(xamlPath, TimeSpan.Zero);
+
+        /// <summary>
+        /// Like <see cref="TryCreateFromCache"/>, but if the compilation isn't cached, waits up to
+        /// <paramref name="maxWait"/> for it (blocking the caller). For rare, user-initiated
+        /// requests such as opening completion in an event attribute, where an empty list is worse
+        /// than a short pause. Returns null if it isn't ready in time (it keeps building).
+        /// </summary>
+        public static XamlRoslynContext TryCreateQuickly(string xamlPath, TimeSpan maxWait)
+        {
+            if (string.IsNullOrEmpty(xamlPath) ||
+                Package.GetGlobalService(typeof(SComponentModel)) is not IComponentModel componentModel)
+            {
+                return null;
+            }
+
+            var workspace = componentModel.GetService<VisualStudioWorkspace>();
+            var project = FindProject(workspace.CurrentSolution, xamlPath);
+            if (project is null)
+            {
+                return null;
+            }
+
+            if (project.TryGetCompilation(out var compilation))
+            {
+                return new XamlRoslynContext(workspace, project, compilation, xamlPath);
+            }
+
+            var building = project.GetCompilationAsync();
+            if (maxWait > TimeSpan.Zero)
+            {
+                var ready = ThreadHelper.JoinableTaskFactory.Run(async () =>
+                    await Task.WhenAny(building, Task.Delay(maxWait)).ConfigureAwait(false) == building);
+                if (ready && building.Status == TaskStatus.RanToCompletion && building.Result is { } built)
+                {
+                    return new XamlRoslynContext(workspace, project, built, xamlPath);
+                }
+            }
+
+            return null;
+        }
+
+        /// <summary>
+        /// Starts building the project's compilation in the background so later features (handler
+        /// completion, navigation) find it ready. Called when an Avalonia XAML file opens.
+        /// </summary>
+        public static void WarmUp(string xamlPath)
+        {
+            if (string.IsNullOrEmpty(xamlPath) ||
+                Package.GetGlobalService(typeof(SComponentModel)) is not IComponentModel componentModel)
+            {
+                return;
+            }
+
+            var project = FindProject(componentModel.GetService<VisualStudioWorkspace>().CurrentSolution, xamlPath);
+            if (project != null)
+            {
+                Services.BackgroundWork.Start(() => project.GetCompilationAsync(), "AvaloniaVS/WarmCompilation");
+            }
         }
 
         /// <summary>

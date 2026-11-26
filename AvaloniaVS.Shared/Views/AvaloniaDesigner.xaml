@@ -5,6 +5,7 @@
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" 
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:local="clr-namespace:AvaloniaVS.Views"
+             xmlns:vsui="clr-namespace:Microsoft.VisualStudio.PlatformUI;assembly=Microsoft.VisualStudio.Shell.15.0"
              xmlns:conv="clr-namespace:AvaloniaVS.Converters"
              xmlns:catalog="clr-namespace:Microsoft.VisualStudio.Imaging;assembly=Microsoft.VisualStudio.ImageCatalog"
              xmlns:imaging="clr-namespace:Microsoft.VisualStudio.Imaging;assembly=Microsoft.VisualStudio.Imaging"
@@ -129,9 +130,11 @@
                 <RowDefinition x:Name="codeRow"/>
             </Grid.RowDefinitions>
 
-            <views:GridLines Grid.ColumnSpan="3"
-                             Grid.RowSpan="3"
-                             Margin="0,0,0,5" />
+            <!-- The design surface, like the WPF designer's: VS's themed designer background. -->
+            <Border Grid.ColumnSpan="3"
+                    Grid.RowSpan="3"
+                    Margin="0,0,0,5"
+                    Background="{DynamicResource {x:Static vsui:EnvironmentColors.DesignerBackgroundBrushKey}}" />
 
       <local:AvaloniaPreviewer x:Name="previewer" Grid.Column="2" SizeChanged="Preview_SizeChanged" />
 

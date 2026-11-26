@@ -74,6 +74,37 @@ namespace CompletionEngineTests
             Assert.All(blocks, b => Assert.StartsWith("</", text.Substring(b.EndTagStart)));
         }
 
+        /// <summary>Exit position for the caret at '|', or null.</summary>
+        private static int? Exit(string text)
+        {
+            var caret = text.IndexOf('|');
+            return XamlLayout.GetAttributeExitPosition(XamlDocument.Parse(text.Remove(caret, 1)), caret);
+        }
+
+        [Theory]
+        [InlineData("<Button Content=\"Save|\" Click=\"x\"/>")]
+        [InlineData("<Button Content=\"Save|\"/>")]
+        [InlineData("<Button Content='Save|'/>")]
+        [InlineData("<TextBlock Text=\"{Binding Name}|\"/>")]
+        [InlineData("<Button Content=\"|\"/>")]
+        public void Enter_Before_Closing_Quote_Exits(string text)
+        {
+            var caret = text.IndexOf('|');
+            Assert.Equal(caret + 1, Exit(text));
+        }
+
+        [Theory]
+        [InlineData("<Button Content=\"Sa|ve\"/>")]
+        [InlineData("<TextBlock Text=\"{Binding Name, |}\"/>")]
+        [InlineData("<TextBlock Text=\"{Binding Name, Converter={StaticResource C}|\"/>")]
+        [InlineData("<Button Content=\"Save\"|/>")]
+        [InlineData("<Window>|</Window>")]
+        [InlineData("<Button Content=\"Save|")]
+        public void Enter_Elsewhere_Keeps_Normal_Behaviour(string text)
+        {
+            Assert.Null(Exit(text));
+        }
+
         [Fact]
         public void MakeIndent_Uses_Tabs_When_Asked()
         {

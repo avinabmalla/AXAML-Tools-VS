@@ -11,6 +11,8 @@ using System.Windows.Controls;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using Avalonia.Ide.CompletionEngine;
+using System.Windows.Input;
+using Avalonia.Ide.CompletionEngine.Navigation;
 using Avalonia.Ide.CompletionEngine.AssemblyMetadata;
 using Avalonia.Ide.CompletionEngine.DnlibMetadataProvider;
 using AvaloniaVS.Models;
@@ -122,6 +124,7 @@ namespace AvaloniaVS.Views
             previewer.Process = Process;
             previewer.RestartRequested += (_, _) => RestartProcessAsync().FireAndForget();
             previewer.ErrorLocationRequested += (_, location) => NavigateToXaml(location.Line, location.Column);
+            previewer.PreviewClicked += (_, click) => BackgroundWork.Start(() => PickAndNavigateAsync(click), "AvaloniaVS/PreviewPick");
             pausedMessage.Visibility = Visibility.Collapsed;
             UpdateLayoutForView();
 
@@ -317,6 +320,8 @@ namespace AvaloniaVS.Views
 
             InitializeEditor();
             ReadCompiledBindingsSetting();
+            UpdateWindowChrome(_editor.TextView.TextSnapshot);
+            Navigation.XamlRoslynContext.WarmUp(xamlPath);
             LoadTargetsAndStartProcessAsync().FireAndForget();
 
             Log.Logger.Verbose("Finished AvaloniaDesigner.Start()");
@@ -590,7 +595,7 @@ namespace AvaloniaVS.Views
                     {
                         await Process.SetScalingAsync(VisualTreeHelper.GetDpi(this).DpiScaleX * _scaling);
                         await Process.StartAsync(assemblyPath, executablePath, hostAppPath, (bool)isNetFx);
-                        await Process.UpdateXamlAsync(await ReadAllTextAsync(_xamlPath));
+                        await Process.UpdateXamlAsync(PrepareXamlForPreview(_editor.TextView.TextSnapshot.GetText()));
                     }
                 }
                 catch (ApplicationException ex)
@@ -678,8 +683,52 @@ namespace AvaloniaVS.Views
                         return new DepsJsonFileAssemblyProvider(executablePath, assemblyPath);
                     };
 
-                    CreateCompletionMetadataAsync(executablePath, assemblyProviderFunc, metadata).FireAndForget();
+                    LoadMetadataThenRefreshPreviewAsync(executablePath, assemblyProviderFunc, metadata).FireAndForget();
                 }
+            }
+        }
+
+        /// <summary>
+        /// Loads completion metadata, then resends the XAML: the first preview may have been sent
+        /// before the metadata existed, so its event handlers couldn't be removed yet.
+        /// </summary>
+        private async Task LoadMetadataThenRefreshPreviewAsync(string executablePath, Func<IAssemblyProvider> assemblyProviderFunc, XamlBufferMetadata metadata)
+        {
+            await CreateCompletionMetadataAsync(executablePath, assemblyProviderFunc, metadata);
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+            if (!_disposed && Process.IsReady && _editor?.TextView is { } view)
+            {
+                await Process.UpdateXamlAsync(PrepareXamlForPreview(view.TextSnapshot.GetText()));
+            }
+        }
+
+        /// <summary>
+        /// The XAML as sent to the previewer: event handler attributes are blanked out, so clicking
+        /// in the interactive preview never runs code-behind handlers. Unchanged until completion
+        /// metadata has loaded (it's needed to tell events from properties).
+        /// </summary>
+        private string PrepareXamlForPreview(string text)
+        {
+            var buffer = _editor?.TextView.TextBuffer;
+            if (buffer is null ||
+                !buffer.Properties.TryGetProperty(typeof(XamlBufferMetadata), out XamlBufferMetadata metadata) ||
+                metadata.CompletionMetadata is null)
+            {
+                return text;
+            }
+
+            try
+            {
+                buffer.Properties.TryGetProperty("AssemblyName", out string assemblyName);
+                var helper = new CompletionEngine.MetadataHelper();
+                helper.SetMetadata(metadata.CompletionMetadata, text, assemblyName);
+                return XamlPreviewTransform.RemoveEventHandlers(XamlDocument.Parse(text), helper);
+            }
+            catch (Exception ex)
+            {
+                Log.Logger.Debug(ex, "Couldn't remove event handlers from the preview XAML");
+                return text;
             }
         }
 
@@ -823,6 +872,75 @@ namespace AvaloniaVS.Views
             await StartProcessAsync();
         }
 
+        /// <summary>
+        /// Clicking the preview selects the clicked control's tag in the XAML. The previewer can't
+        /// hit-test, so this renders an ID-coloured copy of the XAML out of sight and reads the
+        /// colour under the click (see <see cref="XamlPicking"/>).
+        /// </summary>
+        private async Task PickAndNavigateAsync(AvaloniaPreviewer.PreviewClickEventArgs click)
+        {
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+            var buffer = _editor?.TextView.TextBuffer;
+            if (buffer is null || !Process.IsReady)
+            {
+                return;
+            }
+
+            if (!buffer.Properties.TryGetProperty(typeof(XamlBufferMetadata), out XamlBufferMetadata metadata) ||
+                metadata.CompletionMetadata is null)
+            {
+                await Navigation.NavigationHelper.SetStatusAsync("Build the project so the preview can find controls in the XAML.");
+                return;
+            }
+
+            var snapshot = buffer.CurrentSnapshot;
+            buffer.Properties.TryGetProperty("AssemblyName", out string assemblyName);
+            var helper = new CompletionEngine.MetadataHelper();
+            helper.SetMetadata(metadata.CompletionMetadata, snapshot.GetText(), assemblyName);
+
+            var map = XamlPicking.Create(IntelliSense.XamlDocumentCache.Get(snapshot), helper);
+            if (map.Count == 0)
+            {
+                return;
+            }
+
+            var pickXaml = XamlPreviewTransform.RemoveEventHandlers(XamlDocument.Parse(map.Xaml), helper);
+            var frame = await Process.CapturePickFrameAsync(pickXaml, TimeSpan.FromSeconds(3));
+            await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
+
+            var element = frame?.Data is null
+                ? null
+                : map.HitTest(
+                    frame.Data,
+                    frame.Width,
+                    frame.Height,
+                    frame.Stride,
+                    (int)(click.X * frame.Width),
+                    (int)(click.Y * frame.Height));
+
+            if (element is null)
+            {
+                await Navigation.NavigationHelper.SetStatusAsync("Couldn't tell which control was clicked.");
+                return;
+            }
+
+            // Select the element's tag name (translated in case the text changed meanwhile).
+            var view = _editor.TextView;
+            var span = new SnapshotSpan(snapshot, element.NameStart, element.Name.Length)
+                .TranslateTo(view.TextSnapshot, SpanTrackingMode.EdgeExclusive);
+
+            if (View == AvaloniaDesignerView.Design)
+            {
+                View = AvaloniaDesignerView.Split;
+            }
+
+            view.Selection.Select(span, isReversed: false);
+            view.Caret.MoveTo(span.Start);
+            view.ViewScroller.EnsureSpanVisible(span, EnsureSpanVisibleOptions.AlwaysCenter);
+            Keyboard.Focus(view.VisualElement);
+        }
+
         private void NavigateToXaml(int line, int column)
         {
             if (_editor?.TextView is not { } view || line < 1)
@@ -949,11 +1067,51 @@ namespace AvaloniaVS.Views
 
         private void UpdateXaml(ITextSnapshot snapshot)
         {
+            UpdateWindowChrome(snapshot);
             var xaml = snapshot.GetText();
             if (Process.IsReady)
             {
-                Process.UpdateXamlAsync(xaml).FireAndForget();
+                Process.UpdateXamlAsync(PrepareXamlForPreview(xaml)).FireAndForget();
             }
+        }
+
+        /// <summary>
+        /// Shows window chrome around the preview when the root element is a Window (Window itself,
+        /// or a type named like one, e.g. MyAppWindow), titled with its Title attribute.
+        /// </summary>
+        private void UpdateWindowChrome(ITextSnapshot snapshot)
+        {
+            var root = IntelliSense.XamlDocumentCache.Get(snapshot).Root;
+            var name = root?.LocalName ?? "";
+            var isWindow = name.EndsWith("Window", StringComparison.Ordinal) && !root.IsPropertyElement;
+            if (!isWindow)
+            {
+                previewer.SetWindowChrome(null);
+                return;
+            }
+
+            // A literal attribute value, or null when it's missing or bound ({Binding ...}).
+            string Literal(string attribute)
+            {
+                var value = root.GetAttribute(attribute)?.Value?.Trim();
+                return string.IsNullOrEmpty(value) || value.StartsWith("{", StringComparison.Ordinal) ? null : value;
+            }
+
+            bool IsFalse(string attribute) => string.Equals(Literal(attribute), "False", StringComparison.OrdinalIgnoreCase);
+
+            // SystemDecorations (WindowDecorations in newer Avalonia): None, BorderOnly or Full.
+            var decorations = Literal("SystemDecorations") ?? Literal("WindowDecorations");
+
+            previewer.SetWindowChrome(new AvaloniaPreviewer.WindowChrome
+            {
+                // A bound or empty title: show the class name instead, as a placeholder.
+                Title = Literal("Title") ?? root.GetXamlDirective("Class")?.Value?.Split('.').LastOrDefault() ?? "",
+                ShowBorder = !string.Equals(decorations, "None", StringComparison.OrdinalIgnoreCase),
+                ShowTitleBar = !string.Equals(decorations, "BorderOnly", StringComparison.OrdinalIgnoreCase),
+                CanMinimize = !IsFalse("CanMinimize"),
+                // A window that can't be resized has no maximize button either.
+                CanMaximize = !IsFalse("CanMaximize") && !IsFalse("CanResize"),
+            });
         }
 
         private void UpdateScaling(double scaling)

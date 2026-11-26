@@ -27,6 +27,9 @@ namespace AvaloniaVS.IntelliSense
         private readonly ITextUndoHistoryRegistry _textUndoHistoryRegistry;
         private readonly CompletionEngineSource _completionEngineSource;
 
+        [Import]
+        internal IPeekBroker PeekBroker { get; set; }
+
         [ImportingConstructor]
         public XamlCompletionHandlerProvider(
             [Import(typeof(SVsServiceProvider))] IServiceProvider serviceProvider,
@@ -60,14 +63,14 @@ namespace AvaloniaVS.IntelliSense
                 // Registered after the completion handler, so it runs first: it passes Enter on
                 // (letting completion commit or the editor insert the newline), then fixes indentation.
                 textView.Properties.GetOrCreateSingletonProperty(
-                    () => new XamlIndentCommandHandler(textView, textViewAdapter));
+                    () => new XamlIndentCommandHandler(textView, textViewAdapter, _textUndoHistoryRegistry, _completionBroker));
 
                 // Navigation is optional: if it fails to set up, log it rather than failing the
                 // whole editor (which VS reports as "Catastrophic failure").
                 try
                 {
                     textView.Properties.GetOrCreateSingletonProperty(
-                        () => new Navigation.XamlNavigationCommandHandler(textView, textViewAdapter));
+                        () => new Navigation.XamlNavigationCommandHandler(textView, textViewAdapter, PeekBroker));
                 }
                 catch (System.Exception ex)
                 {

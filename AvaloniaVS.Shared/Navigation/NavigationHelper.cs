@@ -46,6 +46,11 @@ namespace AvaloniaVS.Navigation
 
             try
             {
+                // Record where we're leaving from first. Recording only the destination (after the
+                // target document is already active) leaves the starting point out of the history,
+                // so Back skipped past it.
+                RecordCurrentPosition(path);
+
                 VsShellUtilities.OpenDocument(
                     ServiceProvider.GlobalProvider,
                     path,
@@ -60,6 +65,11 @@ namespace AvaloniaVS.Navigation
                 }
 
                 frame.Show();
+
+                // Go through the text manager so the jump is recorded in VS's navigation history:
+                // that's what Navigate Backward (Ctrl+-, the mouse Back button) walks. Placing the
+                // caret directly, as below, doesn't record anything.
+                RecordNavigation(frame, offset);
 
                 var textView = VsShellUtilities.GetTextView(frame);
                 if (textView is null)
@@ -84,6 +94,77 @@ namespace AvaloniaVS.Navigation
             {
                 Log.Logger.Warning(ex, "Failed to open {Path} at {Offset}", path, offset);
                 return false;
+            }
+        }
+
+        /// <summary>
+        /// Navigates the frame's text buffer to <paramref name="offset"/> with
+        /// <see cref="IVsTextManager.NavigateToLineAndColumn"/>, which adds the previous and new
+        /// locations to the navigation history. Best effort: failures are only logged.
+        /// </summary>
+        private static void RecordNavigation(IVsWindowFrame frame, int offset)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            try
+            {
+                if (!ErrorHandler.Succeeded(frame.GetProperty((int)__VSFPROPID.VSFPROPID_DocData, out var docData)) ||
+                    docData is not IVsTextLines lines ||
+                    ServiceProvider.GlobalProvider.GetService(typeof(SVsTextManager)) is not IVsTextManager textManager)
+                {
+                    return;
+                }
+
+                if (!ErrorHandler.Succeeded(lines.GetLineIndexOfPosition(offset, out var line, out var column)))
+                {
+                    return;
+                }
+
+                var logicalView = VSConstants.LOGVIEWID.TextView_guid;
+                textManager.NavigateToLineAndColumn(lines, ref logicalView, line, column, line, column);
+            }
+            catch (Exception ex)
+            {
+                Log.Logger.Debug(ex, "Couldn't record navigation history");
+            }
+        }
+
+        /// <summary>
+        /// Adds the active editor's caret position to VS's navigation history, and to our own
+        /// <see cref="NavigationTrail"/> (which is what makes Back work in the XAML designer pane).
+        /// </summary>
+        private static void RecordCurrentPosition(string destinationPath)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            try
+            {
+                if (ServiceProvider.GlobalProvider.GetService(typeof(SVsTextManager)) is not IVsTextManager textManager ||
+                    !ErrorHandler.Succeeded(textManager.GetActiveView(1, null, out var activeView)) ||
+                    activeView is null ||
+                    !ErrorHandler.Succeeded(activeView.GetBuffer(out var lines)) ||
+                    !ErrorHandler.Succeeded(activeView.GetCaretPos(out var line, out var column)))
+                {
+                    return;
+                }
+
+                if (ErrorHandler.Succeeded(lines.GetPositionOfLineIndex(line, column, out var offset)) &&
+                    lines is IVsUserData userData)
+                {
+                    // The buffer's moniker is its file path.
+                    var monikerGuid = VSConstants.VsTextBufferUserDataGuid.VsBufferMoniker_guid;
+                    if (ErrorHandler.Succeeded(userData.GetData(ref monikerGuid, out var moniker)) && moniker is string fromPath)
+                    {
+                        NavigationTrail.Record(fromPath, offset, destinationPath);
+                    }
+                }
+
+                var logicalView = VSConstants.LOGVIEWID.TextView_guid;
+                textManager.NavigateToLineAndColumn(lines, ref logicalView, line, column, line, column);
+            }
+            catch (Exception ex)
+            {
+                Log.Logger.Debug(ex, "Couldn't record the starting position in navigation history");
             }
         }
 

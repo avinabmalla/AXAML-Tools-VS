@@ -31,6 +31,7 @@ namespace AvaloniaVS.IntelliSense
                 var text = pos.Snapshot.GetText();
                 _buffer.Properties.TryGetProperty("AssemblyName", out string assemblyName);
                 var completions = _engine.CompletionEngine.GetCompletions(metadata.CompletionMetadata, text, pos, assemblyName);
+                AddExistingEventHandlers(completions, pos.Snapshot, pos.Position);
 
                 if (completions?.Completions.Count > 0)
                 {
@@ -81,6 +82,58 @@ namespace AvaloniaVS.IntelliSense
                 }
 
                 sw.Stop();
+            }
+        }
+
+        /// <summary>
+        /// When completing an event attribute's value, also offer the compatible methods already in
+        /// the code-behind, after "&lt;New Event Handler&gt;". Uses Roslyn's cached compilation only,
+        /// so typing never waits for a build; the list fills in once Roslyn has one.
+        /// </summary>
+        private void AddExistingEventHandlers(Avalonia.Ide.CompletionEngine.CompletionSet completions, ITextSnapshot snapshot, int position)
+        {
+            var completionList = completions?.Completions;
+            if (completionList is null ||
+                !completionList.Any(c => c.DisplayText == Avalonia.Ide.CompletionEngine.CompletionEngine.NewEventHandlerDisplayText))
+            {
+                return;
+            }
+
+            try
+            {
+                var document = XamlDocumentCache.Get(snapshot);
+                var eventContext = Navigation.EventAttributeContext.TryCreate(document, position, _engine.CompletionEngine.Helper);
+                if (eventContext?.ClassName is null)
+                {
+                    return;
+                }
+
+                // Roslyn rarely keeps compilations cached, so wait briefly for one: listing the
+                // existing handlers is worth a short pause when you open completion on an event.
+                var context = Navigation.XamlRoslynContext.TryCreateQuickly(
+                    Navigation.XamlRoslynContext.GetFilePath(_buffer), System.TimeSpan.FromMilliseconds(1500));
+                var type = context?.GetType(eventContext.ClassName);
+                var parameters = type is null
+                    ? null
+                    : Navigation.EventHandlerGenerator.ResolveParameters(context, eventContext.EventOwnerType, eventContext.EventName, eventContext.IsAttached);
+                if (parameters is null)
+                {
+                    return;
+                }
+
+                var existing = Navigation.EventHandlerGenerator.FindCompatibleHandlers(context, type, parameters)
+                    .Select(m => m.Name)
+                    .Distinct()
+                    .OrderBy(n => n, System.StringComparer.Ordinal)
+                    .Where(n => !completionList.Any(c => c.InsertText == n && c.DisplayText != Avalonia.Ide.CompletionEngine.CompletionEngine.NewEventHandlerDisplayText))
+                    .Select(n => new Avalonia.Ide.CompletionEngine.Completion(n, n, $"Existing handler in {type.Name}", Avalonia.Ide.CompletionEngine.CompletionKind.Event))
+                    .ToList();
+
+                completionList.AddRange(existing);
+            }
+            catch (System.Exception ex)
+            {
+                Log.Logger.Debug(ex, "Couldn't list existing event handlers");
             }
         }
 

@@ -36,11 +36,15 @@ public sealed class BindingWithoutDataType
 /// </summary>
 public static class BindingDataTypeAnalyzer
 {
-    public static IReadOnlyList<BindingWithoutDataType> Analyze(string text)
+    public static IReadOnlyList<BindingWithoutDataType> Analyze(string text) => Analyze(XamlDocument.Parse(text));
+
+    /// <inheritdoc cref="Analyze(string)"/>
+    public static IReadOnlyList<BindingWithoutDataType> Analyze(XamlDocument document)
     {
+        var text = document.Text;
         var result = new List<BindingWithoutDataType>();
-        var elements = XamlScanner.Scan(text);
-        var root = XamlScanner.GetRoot(elements);
+        var elements = document.Elements;
+        var root = document.Root;
         if (root is null)
         {
             return result;

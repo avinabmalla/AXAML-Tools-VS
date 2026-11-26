@@ -30,9 +30,14 @@ public static class XamlNavigationClassifier
     /// from properties. Optional: without it, only <c>clr-namespace</c>/<c>using</c> types resolve
     /// and event attributes aren't recognised.
     /// </param>
-    public static XamlNavigationTarget? Classify(string text, int position, CompletionEngine.MetadataHelper? helper = null)
+    public static XamlNavigationTarget? Classify(string text, int position, CompletionEngine.MetadataHelper? helper = null) =>
+        Classify(XamlDocument.Parse(text), position, helper);
+
+    /// <inheritdoc cref="Classify(string, int, CompletionEngine.MetadataHelper?)"/>
+    public static XamlNavigationTarget? Classify(XamlDocument document, int position, CompletionEngine.MetadataHelper? helper = null)
     {
-        var elements = XamlScanner.Scan(text);
+        var text = document.Text;
+        var elements = document.Elements;
         var element = XamlScanner.FindStartTagAt(elements, position);
         if (element is null)
         {

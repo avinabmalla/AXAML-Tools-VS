@@ -70,11 +70,15 @@ namespace AvaloniaVS
     {
         public static SolutionService SolutionService { get; private set; }
 
+        /// <summary>The loaded package, for work that should be tracked by its JoinableTaskFactory.</summary>
+        public static AvaloniaPackage Instance { get; private set; }
+
         protected override async Task InitializeAsync(
             CancellationToken cancellationToken,
             IProgress<ServiceProgressData> progress)
         {
             await base.InitializeAsync(cancellationToken, progress);
+            Instance = this;
 
             await JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
 

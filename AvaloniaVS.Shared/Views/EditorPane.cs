@@ -69,9 +69,33 @@ namespace AvaloniaVS.Shared.Views
         /// <summary>The XAML text view hosted inside the designer, once it has been created.</summary>
         public Microsoft.VisualStudio.Text.Editor.IWpfTextView TextView => _textEditorHost.WpfTextViewHost?.TextView;
 
+        /// <summary>
+        /// Navigate Backward/Forward (Ctrl+-, Ctrl+Shift+-, the mouse Back/Forward buttons) belong to
+        /// VS's navigation history. The embedded code window would otherwise claim them, so Back
+        /// did nothing while the XAML editor had focus.
+        /// </summary>
+        private static bool IsNavigationHistoryCommand(Guid group, uint id) =>
+            group == VSConstants.GUID_VSStandardCommandSet97 &&
+            (id == (uint)VSConstants.VSStd97CmdID.ShellNavBackward || id == (uint)VSConstants.VSStd97CmdID.ShellNavForward);
+
         int IOleCommandTarget.Exec(ref Guid pguidCmdGroup, uint nCmdID, uint nCmdexecopt, IntPtr pvaIn, IntPtr pvaOut)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
+
+            if (IsNavigationHistoryCommand(pguidCmdGroup, nCmdID))
+            {
+                // Back after one of our jumps into this file: return to where it came from.
+                if (nCmdID == (uint)VSConstants.VSStd97CmdID.ShellNavBackward &&
+                    AvaloniaVS.Navigation.NavigationTrail.TakeBackFrom(_textEditorHost.FileName) is { } entry)
+                {
+                    AvaloniaVS.Services.BackgroundWork.Start(
+                        () => AvaloniaVS.Navigation.NavigationHelper.OpenAtAsync(entry.FromPath, entry.FromOffset),
+                        "AvaloniaVS/XamlNavigateBack");
+                    return VSConstants.S_OK;
+                }
+
+                return (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
+            }
 
             if (_textEditorHost.VsCodeWindow is IOleCommandTarget oleCT)
                 return oleCT.Exec(ref pguidCmdGroup, nCmdID, nCmdexecopt, pvaIn, pvaOut);
@@ -82,6 +106,18 @@ namespace AvaloniaVS.Shared.Views
         int IOleCommandTarget.QueryStatus(ref Guid pguidCmdGroup, uint cCmds, OLECMD[] prgCmds, IntPtr pCmdText)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
+
+            if (cCmds == 1 && IsNavigationHistoryCommand(pguidCmdGroup, prgCmds[0].cmdID))
+            {
+                if (prgCmds[0].cmdID == (uint)VSConstants.VSStd97CmdID.ShellNavBackward &&
+                    AvaloniaVS.Navigation.NavigationTrail.CanGoBackFrom(_textEditorHost.FileName))
+                {
+                    prgCmds[0].cmdf = (uint)(OLECMDF.OLECMDF_SUPPORTED | OLECMDF.OLECMDF_ENABLED);
+                    return VSConstants.S_OK;
+                }
+
+                return (int)Microsoft.VisualStudio.OLE.Interop.Constants.OLECMDERR_E_NOTSUPPORTED;
+            }
 
             if (_textEditorHost.VsCodeWindow is IOleCommandTarget oleCT)
                 return oleCT.QueryStatus(ref pguidCmdGroup, cCmds, prgCmds, pCmdText);

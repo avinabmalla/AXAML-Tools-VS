@@ -202,6 +202,17 @@ namespace AvaloniaVS.IntelliSense
 
             // Also adding '#' for Selectors
 
+            // Tab always accepts: the highlighted item, or the first one in the list. After the list
+            // re-filters as you type, the best match is often highlighted without being "selected",
+            // and Tab then inserted a tab character instead of completing.
+            if (c == '\t' && session is { IsDismissed: false } &&
+                session.SelectedCompletionSet is { } tabSet &&
+                !tabSet.SelectionStatus.IsSelected &&
+                (tabSet.SelectionStatus.Completion ?? tabSet.Completions.FirstOrDefault()) is { } tabCompletion)
+            {
+                tabSet.SelectionStatus = new CompletionSelectionStatus(tabCompletion, isSelected: true, isUnique: true);
+            }
+
             if (char.IsWhiteSpace(c)
                 || c == '\'' || c == '"' || c == '=' || c == '>' || c == '.'
                 || c == '#' || c == ')' || c == ']')
@@ -488,41 +499,16 @@ namespace AvaloniaVS.IntelliSense
         {
             var buffer = _textView.TextBuffer;
             var snapshot = buffer.CurrentSnapshot;
-            var text = snapshot.GetText();
             var caret = _textView.Caret.Position.BufferPosition.Position;
+            var document = XamlDocumentCache.Get(snapshot);
 
-            var elements = XamlScanner.Scan(text);
-            var element = XamlScanner.FindStartTagAt(elements, caret);
-            var attribute = element?.Attributes.LastOrDefault(a => a.HasValue && a.ValueStart <= caret && caret <= a.ValueEnd + 1)
-                ?? element?.Attributes.LastOrDefault(a => a.Value == methodName);
-            if (element is null || attribute is null)
+            var eventContext = EventAttributeContext.TryCreate(document, caret, _engine.Helper);
+            if (eventContext is null)
             {
                 return;
             }
 
-            var type = _engine.Helper.LookupType(element.Name);
-            var dot = attribute.Name.IndexOf('.', attribute.Name.IndexOf(':') + 1);
-            string ownerType;
-            string eventName;
-            var isAttached = dot > 0;
-
-            if (isAttached)
-            {
-                var owner = _engine.Helper.LookupType(attribute.Name.Substring(0, dot));
-                eventName = attribute.Name.Substring(dot + 1);
-                ownerType = owner?.FullName;
-            }
-            else
-            {
-                eventName = attribute.Name;
-                var metadataEvent = type?.Events.FirstOrDefault(e => e.Name == eventName);
-                ownerType = metadataEvent?.DeclaringType?.FullName is { Length: > 0 } declaring ? declaring : type?.FullName;
-            }
-
-            if (ownerType is null)
-            {
-                return;
-            }
+            var attribute = eventContext.Attribute;
 
             var settings = _serviceProvider.GetMefService<IAvaloniaVSSettings>();
             var request = new EventHandlerGenerator.Request
@@ -530,17 +516,15 @@ namespace AvaloniaVS.IntelliSense
                 Buffer = buffer,
                 ValueSpan = snapshot.CreateTrackingSpan(attribute.ValueStart, attribute.ValueEnd - attribute.ValueStart, SpanTrackingMode.EdgeExclusive),
                 XamlPath = XamlRoslynContext.GetFilePath(buffer),
-                ClassName = XamlScanner.GetRoot(elements)?.GetXamlDirective("Class")?.Value?.Trim(),
-                EventOwnerType = ownerType,
-                EventName = eventName,
-                IsAttached = isAttached,
+                ClassName = eventContext.ClassName,
+                EventOwnerType = eventContext.EventOwnerType,
+                EventName = eventContext.EventName,
+                IsAttached = eventContext.IsAttached,
                 MethodName = methodName,
                 Navigate = settings?.NavigateToGeneratedEventHandler == true,
             };
 
-            ThreadHelper.JoinableTaskFactory
-                .RunAsync(() => EventHandlerGenerator.GenerateAsync(request, CancellationToken.None))
-                .FileAndForget("AvaloniaVS/GenerateEventHandler");
+            BackgroundWork.Start(() => EventHandlerGenerator.GenerateAsync(request, CancellationToken.None), "AvaloniaVS/GenerateEventHandler");
         }
 
         private static bool TryGetChar(ref Guid pguidCmdGroup, uint nCmdID, IntPtr pvaIn, out char c)

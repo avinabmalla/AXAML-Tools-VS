@@ -16,15 +16,26 @@ namespace AvaloniaVS.Navigation
     /// </summary>
     internal sealed class XamlNavigationCommandHandler : IOleCommandTarget
     {
+        private enum NavigationCommand
+        {
+            None,
+            GoToDefinition,
+            GoToImplementation,
+            FindAllReferences,
+            PeekDefinition,
+        }
+
         private readonly ITextView _textView;
+        private readonly Microsoft.VisualStudio.Language.Intellisense.IPeekBroker _peekBroker;
         private readonly IOleCommandTarget _next;
         private readonly Guid _goToImplementationGroup;
         private readonly uint _goToImplementationId;
 
-        public XamlNavigationCommandHandler(ITextView textView, IVsTextView textViewAdapter)
+        public XamlNavigationCommandHandler(ITextView textView, IVsTextView textViewAdapter, Microsoft.VisualStudio.Language.Intellisense.IPeekBroker peekBroker)
         {
             ThreadHelper.ThrowIfNotOnUIThread();
             _textView = textView;
+            _peekBroker = peekBroker;
 
             // Go To Implementation is a Roslyn command with no VSConstants entry, so look up its
             // GUID/ID by name rather than hard-coding them.
@@ -55,7 +66,7 @@ namespace AvaloniaVS.Navigation
             // The XML editor doesn't enable these in .axaml files; we do.
             for (var i = 0; i < cCmds; i++)
             {
-                if (IsNavigationCommand(pguidCmdGroup, prgCmds[i].cmdID, out _))
+                if (GetCommand(pguidCmdGroup, prgCmds[i].cmdID) != NavigationCommand.None)
                 {
                     prgCmds[i].cmdf = (uint)(OLECMDF.OLECMDF_SUPPORTED | OLECMDF.OLECMDF_ENABLED);
                     result = VSConstants.S_OK;
@@ -69,15 +80,35 @@ namespace AvaloniaVS.Navigation
         {
             ThreadHelper.ThrowIfNotOnUIThread();
 
-            if (IsNavigationCommand(pguidCmdGroup, nCmdID, out var implementation))
+            var command = GetCommand(pguidCmdGroup, nCmdID);
+            if (command != NavigationCommand.None)
             {
                 var target = XamlNavigationService.Classify(_textView, _textView.Caret.Position.BufferPosition);
                 if (target != null)
                 {
-                    Log.Logger.Debug("Navigating to {Target} (implementation: {Implementation})", target, implementation);
-                    ThreadHelper.JoinableTaskFactory
-                        .RunAsync(() => XamlNavigationService.NavigateAsync(_textView, target, implementation, CancellationToken.None))
-                        .FileAndForget("AvaloniaVS/XamlNavigation");
+                    Log.Logger.Debug("{Command} on {Target}", command, target);
+
+                    switch (command)
+                    {
+                        case NavigationCommand.PeekDefinition:
+                            _peekBroker.TriggerPeekSession(
+                                _textView,
+                                Microsoft.VisualStudio.Language.Intellisense.PredefinedPeekRelationships.Definitions.Name);
+                            break;
+
+                        case NavigationCommand.FindAllReferences:
+                            AvaloniaVS.Services.BackgroundWork.Start(
+                                () => XamlNavigationService.FindAllReferencesAsync(_textView, target, CancellationToken.None),
+                                "AvaloniaVS/XamlFindReferences");
+                            break;
+
+                        default:
+                            AvaloniaVS.Services.BackgroundWork.Start(
+                                () => XamlNavigationService.NavigateAsync(_textView, target, command == NavigationCommand.GoToImplementation, CancellationToken.None),
+                                "AvaloniaVS/XamlNavigation");
+                            break;
+                    }
+
                     return VSConstants.S_OK;
                 }
             }
@@ -85,22 +116,30 @@ namespace AvaloniaVS.Navigation
             return _next.Exec(ref pguidCmdGroup, nCmdID, nCmdexecopt, pvaIn, pvaOut);
         }
 
-        private bool IsNavigationCommand(Guid group, uint id, out bool implementation)
+        private NavigationCommand GetCommand(Guid group, uint id)
         {
-            implementation = false;
-
-            if (group == VSConstants.GUID_VSStandardCommandSet97 && id == (uint)VSConstants.VSStd97CmdID.GotoDefn)
+            if (group == VSConstants.GUID_VSStandardCommandSet97)
             {
-                return true;
+                switch ((VSConstants.VSStd97CmdID)id)
+                {
+                    case VSConstants.VSStd97CmdID.GotoDefn:
+                        return NavigationCommand.GoToDefinition;
+                    case VSConstants.VSStd97CmdID.FindReferences:
+                        return NavigationCommand.FindAllReferences;
+                }
+            }
+
+            if (group == VSConstants.VsStd12 && id == (uint)VSConstants.VSStd12CmdID.PeekDefinition)
+            {
+                return NavigationCommand.PeekDefinition;
             }
 
             if (_goToImplementationId != 0 && group == _goToImplementationGroup && id == _goToImplementationId)
             {
-                implementation = true;
-                return true;
+                return NavigationCommand.GoToImplementation;
             }
 
-            return false;
+            return NavigationCommand.None;
         }
     }
 }

@@ -152,24 +152,28 @@ namespace AvaloniaVS.Navigation
         /// or <c>(object sender, TArgs e)</c> for a routed/attached event registered as
         /// <c>RoutedEvent&lt;TArgs&gt;</c>.
         /// </summary>
-        internal static IReadOnlyList<(ITypeSymbol Type, string Name)> ResolveParameters(XamlRoslynContext context, Request request)
+        internal static IReadOnlyList<(ITypeSymbol Type, string Name)> ResolveParameters(XamlRoslynContext context, Request request) =>
+            ResolveParameters(context, request.EventOwnerType, request.EventName, request.IsAttached);
+
+        internal static IReadOnlyList<(ITypeSymbol Type, string Name)> ResolveParameters(
+            XamlRoslynContext context, string eventOwnerType, string eventName, bool isAttached)
         {
-            var owner = context.GetType(request.EventOwnerType);
+            var owner = context.GetType(eventOwnerType);
             if (owner is null)
             {
                 return null;
             }
 
-            if (!request.IsAttached)
+            if (!isAttached)
             {
-                var clrEvent = XamlRoslynContext.FindMembers(owner, request.EventName).OfType<IEventSymbol>().FirstOrDefault();
+                var clrEvent = XamlRoslynContext.FindMembers(owner, eventName).OfType<IEventSymbol>().FirstOrDefault();
                 if (clrEvent?.Type is INamedTypeSymbol { DelegateInvokeMethod: { } invoke })
                 {
                     return invoke.Parameters.Select(p => (p.Type, p.Name)).ToList();
                 }
             }
 
-            var field = XamlRoslynContext.FindMembers(owner, request.EventName + "Event").OfType<IFieldSymbol>().FirstOrDefault();
+            var field = XamlRoslynContext.FindMembers(owner, eventName + "Event").OfType<IFieldSymbol>().FirstOrDefault();
             if (field?.Type is INamedTypeSymbol fieldType)
             {
                 var args = fieldType.TypeArguments.FirstOrDefault()
@@ -184,34 +188,41 @@ namespace AvaloniaVS.Navigation
         }
 
         private static IMethodSymbol FindCompatibleHandler(
-            XamlRoslynContext context, INamedTypeSymbol type, string name, IReadOnlyList<(ITypeSymbol Type, string Name)> parameters)
+            XamlRoslynContext context, INamedTypeSymbol type, string name, IReadOnlyList<(ITypeSymbol Type, string Name)> parameters) =>
+            type.GetMembers(name).OfType<IMethodSymbol>().FirstOrDefault(m => IsCompatibleHandler(context, m, parameters));
+
+        /// <summary>
+        /// Methods on <paramref name="type"/> (not its bases) that can handle an event with these
+        /// parameters, for listing in completion.
+        /// </summary>
+        internal static IEnumerable<IMethodSymbol> FindCompatibleHandlers(
+            XamlRoslynContext context, INamedTypeSymbol type, IReadOnlyList<(ITypeSymbol Type, string Name)> parameters) =>
+            type.GetMembers().OfType<IMethodSymbol>()
+                .Where(m => m.MethodKind == MethodKind.Ordinary && !m.IsStatic && !m.IsImplicitlyDeclared)
+                .Where(m => IsCompatibleHandler(context, m, parameters));
+
+        /// <summary>
+        /// A void method whose parameters accept the event's arguments. Taking a base type of the
+        /// event args (e.g. RoutedEventArgs for TappedEventArgs) is fine.
+        /// </summary>
+        internal static bool IsCompatibleHandler(
+            XamlRoslynContext context, IMethodSymbol method, IReadOnlyList<(ITypeSymbol Type, string Name)> parameters)
         {
-            foreach (var method in type.GetMembers(name).OfType<IMethodSymbol>())
+            if (!method.ReturnsVoid || method.IsGenericMethod || method.Parameters.Length != parameters.Count)
             {
-                if (!method.ReturnsVoid || method.Parameters.Length != parameters.Count)
-                {
-                    continue;
-                }
+                return false;
+            }
 
-                // A handler taking a base type of the event args (e.g. RoutedEventArgs) is fine.
-                var compatible = true;
-                for (var i = 0; i < parameters.Count; i++)
+            for (var i = 0; i < parameters.Count; i++)
+            {
+                var conversion = context.Compilation.ClassifyConversion(parameters[i].Type, method.Parameters[i].Type);
+                if (!conversion.IsIdentity && !conversion.IsImplicit)
                 {
-                    var conversion = context.Compilation.ClassifyConversion(parameters[i].Type, method.Parameters[i].Type);
-                    if (!conversion.IsIdentity && !conversion.IsImplicit)
-                    {
-                        compatible = false;
-                        break;
-                    }
-                }
-
-                if (compatible)
-                {
-                    return method;
+                    return false;
                 }
             }
 
-            return null;
+            return true;
         }
 
         private static string GetUniqueName(INamedTypeSymbol type, string name)

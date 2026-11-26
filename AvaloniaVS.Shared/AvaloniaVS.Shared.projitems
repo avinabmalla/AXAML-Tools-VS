@@ -62,7 +62,6 @@
       <DependentUpon>AvaloniaPreviewer.xaml</DependentUpon>
     </Compile>
     <Compile Include="$(MSBuildThisFileDirectory)Views\EditorPane.cs" />
-    <Compile Include="$(MSBuildThisFileDirectory)Views\GridLines.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Views\OptionsDialogPage.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Views\OptionsView.xaml.cs">
       <DependentUpon>OptionsView.xaml</DependentUpon>
@@ -80,6 +79,16 @@
     <Compile Include="$(MSBuildThisFileDirectory)SuggestedActions\Actions\AddDataTypeSuggestedAction.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IntelliSense\XamlStructureTagger.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)IntelliSense\XamlIndentCommandHandler.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IntelliSense\XamlDocumentCache.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Services\BackgroundWork.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Navigation\EventAttributeContext.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Navigation\XamlLocationService.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Navigation\ReferencesWindow.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Navigation\XamlPeekProvider.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Navigation\CtrlClickLinkTagger.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Navigation\CSharpXamlNavigation.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Navigation\CSharpXamlNavigableSymbols.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Navigation\NavigationTrail.cs" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="$(MSBuildThisFileDirectory)icon.ico">

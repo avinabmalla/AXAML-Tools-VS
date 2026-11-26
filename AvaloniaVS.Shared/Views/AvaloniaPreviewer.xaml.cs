@@ -171,6 +171,38 @@ namespace AvaloniaVS.Views
             }
         }
 
+        /// <summary>
+        /// Frames the preview like the window it describes: a border, and a title bar with the
+        /// title and the caption buttons the window actually shows. Pass null for a non-window.
+        /// </summary>
+        public void SetWindowChrome(WindowChrome chrome)
+        {
+            var hasBorder = chrome?.ShowBorder == true;
+            var hasTitleBar = hasBorder && chrome.ShowTitleBar;
+
+            windowFrame.BorderThickness = hasBorder ? new Thickness(1) : new Thickness(0);
+            titleBar.Visibility = hasTitleBar ? Visibility.Visible : Visibility.Collapsed;
+            windowTitle.Text = chrome?.Title ?? "";
+            minimizeButton.Visibility = chrome?.CanMinimize != false ? Visibility.Visible : Visibility.Collapsed;
+            maximizeButton.Visibility = chrome?.CanMaximize != false ? Visibility.Visible : Visibility.Collapsed;
+        }
+
+        /// <summary>How a previewed Window's frame looks, from its XAML attributes.</summary>
+        public sealed class WindowChrome
+        {
+            public string Title { get; set; }
+
+            /// <summary>False for <c>SystemDecorations="None"</c>.</summary>
+            public bool ShowBorder { get; set; } = true;
+
+            /// <summary>False for <c>SystemDecorations="BorderOnly"</c>.</summary>
+            public bool ShowTitleBar { get; set; } = true;
+
+            public bool CanMinimize { get; set; } = true;
+
+            public bool CanMaximize { get; set; } = true;
+        }
+
         public void Dispose()
         {
             Process = null;
@@ -311,6 +343,13 @@ namespace AvaloniaVS.Views
             }
         }
 
+        // The preview is live: mouse input goes to the previewer host, so menus, combo boxes and
+        // expanders can be opened. Ctrl+Click is reserved for "go to this control's XAML"
+        // (PreviewClicked) and isn't forwarded, like Ctrl+Click in the code editor.
+        private bool _pickClick;
+
+        private static bool IsPickModifier() => (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control;
+
         private void Preview_MouseMove(object sender, MouseEventArgs e)
         {
             var p = e.GetPosition(preview);
@@ -327,8 +366,16 @@ namespace AvaloniaVS.Views
         private void Preview_MouseDown(object sender, MouseButtonEventArgs e)
         {
             var p = e.GetPosition(preview);
-            var scaling = GetScaling();
 
+            if (e.ChangedButton == WpfMouseButton.Left && IsPickModifier() && preview.ActualWidth > 0 && preview.ActualHeight > 0)
+            {
+                _pickClick = true;
+                PreviewClicked?.Invoke(this, new PreviewClickEventArgs(p.X / preview.ActualWidth, p.Y / preview.ActualHeight));
+                e.Handled = true;
+                return;
+            }
+
+            var scaling = GetScaling();
             Process?.SendInputAsync(new PointerPressedEventMessage
             {
                 X = p.X / scaling,
@@ -340,6 +387,14 @@ namespace AvaloniaVS.Views
 
         private void Preview_MouseUp(object sender, MouseButtonEventArgs e)
         {
+            if (_pickClick && e.ChangedButton == WpfMouseButton.Left)
+            {
+                // The matching release of a Ctrl+Click: the press wasn't forwarded either.
+                _pickClick = false;
+                e.Handled = true;
+                return;
+            }
+
             var p = e.GetPosition(preview);
             var scaling = GetScaling();
 
@@ -351,6 +406,26 @@ namespace AvaloniaVS.Views
                 Modifiers = GetModifiers(e),
             });
         }
+
+        /// <summary>
+        /// Raised when the preview is Ctrl+Clicked, with the position as a fraction (0-1) of the
+        /// rendered image, so it maps onto a frame of any resolution.
+        /// </summary>
+        public event EventHandler<PreviewClickEventArgs> PreviewClicked;
+
+        public sealed class PreviewClickEventArgs : EventArgs
+        {
+            public PreviewClickEventArgs(double x, double y)
+            {
+                X = x;
+                Y = y;
+            }
+
+            public double X { get; }
+
+            public double Y { get; }
+        }
+
         private static T FindParent<T>(DependencyObject child) where T : DependencyObject
         {
             //get parent item

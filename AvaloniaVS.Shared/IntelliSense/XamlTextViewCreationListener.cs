@@ -40,6 +40,15 @@ namespace AvaloniaVS.IntelliSense
                 textView.Options.SetOptionValue(DefaultTextViewHostOptions.ShowEnhancedScrollBarOptionId, false);
                 textView.Options.SetOptionValue(DefaultTextViewHostOptions.SourceImageMarginEnabledOptionId, false);
                 textView.Options.SetOptionValue(DefaultTextViewHostOptions.ShowPreviewOptionId, false);
+
+                // Error List entries for this file shouldn't outlive its editor.
+                textView.Closed += (_, _) =>
+                {
+                    if (textView.TextBuffer.Properties.TryGetProperty(typeof(BindingDataTypeTagger), out BindingDataTypeTagger tagger))
+                    {
+                        tagger.Clear();
+                    }
+                };
             }
         }
     }

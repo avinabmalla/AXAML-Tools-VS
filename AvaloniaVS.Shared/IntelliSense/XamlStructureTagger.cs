@@ -57,7 +57,7 @@ namespace AvaloniaVS.IntelliSense
             var snapshot = spans[0].Snapshot;
             if (_snapshot != snapshot)
             {
-                _blocks = XamlLayout.GetBlocks(snapshot.GetText());
+                _blocks = XamlLayout.GetBlocks(XamlDocumentCache.Get(snapshot));
                 _snapshot = snapshot;
             }
 
