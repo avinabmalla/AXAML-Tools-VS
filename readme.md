@@ -13,8 +13,6 @@ It has its own VSIX identity and package GUIDs, so it doesn't collide with the o
 
 The fork collects no usage data. The original extension's analytics service has been removed.
 
-See [Plan.md](Plan.md) for the roadmap.
-
 ## Building
 
 Requirements: Visual Studio 2022 17.14+ or 2026 with the **Visual Studio extension development** workload, plus the .NET 8 and .NET 10 SDKs.
