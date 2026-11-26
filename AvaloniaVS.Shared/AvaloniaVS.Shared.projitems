@@ -70,6 +70,14 @@
     <Compile Include="$(MSBuildThisFileDirectory)Views\TextEditorHost.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)Views\VsTheme.cs" />
     <Compile Include="$(MSBuildThisFileDirectory)ZoomLevels.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Navigation\XamlRoslynContext.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Navigation\NavigationHelper.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Navigation\EventHandlerGenerator.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Navigation\XamlNavigationService.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Navigation\XamlNavigationCommandHandler.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)Navigation\XamlCtrlClickMouseProcessor.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)IntelliSense\BindingDataTypeTagger.cs" />
+    <Compile Include="$(MSBuildThisFileDirectory)SuggestedActions\Actions\AddDataTypeSuggestedAction.cs" />
   </ItemGroup>
   <ItemGroup>
     <Content Include="$(MSBuildThisFileDirectory)icon.ico">

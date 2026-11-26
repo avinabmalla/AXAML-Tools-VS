@@ -25,6 +25,10 @@
         <RowDefinition Height="Auto" />
         <RowDefinition Height="10" />
         <RowDefinition Height="Auto" />
+        <RowDefinition Height="10" />
+        <RowDefinition Height="Auto" />
+        <RowDefinition Height="10" />
+        <RowDefinition Height="Auto" />
       </Grid.RowDefinitions>
       <Grid.ColumnDefinitions>
         <ColumnDefinition MinWidth="150" Width="Auto" />
@@ -55,6 +59,22 @@
       <ComboBox Grid.Column="2" Grid.Row="6" VerticalAlignment="Center"
                   ItemsSource="{Binding Source={x:Type serilog:LogEventLevel}, Converter={StaticResource EnumValues}}"
                   SelectedItem="{Binding MinimumLogVerbosity, Mode=TwoWay}"/>
+
+      <TextBlock Text="Event Handler Names:" Grid.Column="0" Grid.Row="8" VerticalAlignment="Top" />
+      <StackPanel Grid.Column="2" Grid.Row="8">
+        <ComboBox IsEditable="True" VerticalAlignment="Center"
+                  Text="{Binding EventHandlerNamingPattern, Mode=TwoWay, UpdateSourceTrigger=LostFocus}">
+          <ComboBoxItem Content="{}{Name}_{Event}" />
+          <ComboBoxItem Content="On{Name}{Event}" />
+          <ComboBoxItem Content="{}{Type}_{Event}" />
+        </ComboBox>
+        <TextBlock Margin="0,4,0,0" TextWrapping="Wrap" FontSize="11" Opacity="0.8"
+                   Text="{}{Name} is the element's x:Name (or its type when it has none), {Type} its type, {Event} the event." />
+      </StackPanel>
+
+      <TextBlock Text="After Creating a Handler:" Grid.Column="0" Grid.Row="10" VerticalAlignment="Top" />
+      <CheckBox Grid.Column="2" Grid.Row="10" VerticalAlignment="Center"
+                IsChecked="{Binding NavigateToGeneratedEventHandler, Mode=TwoWay}">Open it in the code editor</CheckBox>
     </Grid>
   </StackPanel>
 </UserControl>

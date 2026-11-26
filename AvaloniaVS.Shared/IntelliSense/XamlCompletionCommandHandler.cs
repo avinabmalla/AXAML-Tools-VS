@@ -4,6 +4,10 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Avalonia.Ide.CompletionEngine;
+using Avalonia.Ide.CompletionEngine.Navigation;
+using AvaloniaVS.Navigation;
+using AvaloniaVS.Services;
+using System.Threading;
 using EnvDTE;
 using EnvDTE80;
 using Microsoft.CodeAnalysis;
@@ -254,11 +258,9 @@ namespace AvaloniaVS.IntelliSense
                     if (state == XmlParser.ParserState.AttributeValue ||
                         state == XmlParser.ParserState.AfterAttributeValue)
                     {
-                        var type = _engine.Helper.LookupType(parser.TagName);
-                        if (type != null && type.Events.FirstOrDefault(x => x.Name == parser.AttributeName) != null)
+                        if (selected?.DisplayText == CompletionEngine.NewEventHandlerDisplayText)
                         {
-                            GenerateEventHandlerAsync(type.FullName, parser.AttributeName, selected.InsertionText)
-                                .FireAndForget();
+                            QueueEventHandlerGeneration(selected.InsertionText);
                         }
                         var isSelector = parser.AttributeName?.Equals("Selector") == true;
                         if (char.IsWhiteSpace(c))
@@ -478,150 +480,67 @@ namespace AvaloniaVS.IntelliSense
             session.Dismissed -= SessionDismissed;
         }
 
-        private IEnumerable<ParameterSyntax> GetParametersList(string[] parameterTypes, string[] parameterNames)
+        /// <summary>
+        /// After "&lt;New Event Handler&gt;" is committed, creates the handler in the code-behind.
+        /// The attribute value is tracked so it can be renamed if the name has to change.
+        /// </summary>
+        private void QueueEventHandlerGeneration(string methodName)
         {
-            for (int i = 0; i < parameterTypes.Length; i++)
+            var buffer = _textView.TextBuffer;
+            var snapshot = buffer.CurrentSnapshot;
+            var text = snapshot.GetText();
+            var caret = _textView.Caret.Position.BufferPosition.Position;
+
+            var elements = XamlScanner.Scan(text);
+            var element = XamlScanner.FindStartTagAt(elements, caret);
+            var attribute = element?.Attributes.LastOrDefault(a => a.HasValue && a.ValueStart <= caret && caret <= a.ValueEnd + 1)
+                ?? element?.Attributes.LastOrDefault(a => a.Value == methodName);
+            if (element is null || attribute is null)
             {
-                yield return SyntaxFactory.Parameter(SyntaxFactory.List<AttributeListSyntax>(),
-                                                     SyntaxFactory.TokenList(),
-                                                     SyntaxFactory.ParseTypeName(parameterTypes[i]),
-                                                     SyntaxFactory.Identifier(parameterNames[i]),
-                                                     null);
+                return;
             }
-        }
 
-        private async System.Threading.Tasks.Task GenerateEventHandlerAsync(string controlType, string eventName, string generatedMethodName)
-        {
-            var currentScheduler = TaskScheduler.FromCurrentSynchronizationContext();
-            try
+            var type = _engine.Helper.LookupType(element.Name);
+            var dot = attribute.Name.IndexOf('.', attribute.Name.IndexOf(':') + 1);
+            string ownerType;
+            string eventName;
+            var isAttached = dot > 0;
+
+            if (isAttached)
             {
-                var componentModel = (IComponentModel)Package.GetGlobalService(typeof(SComponentModel));
-                var dte = Package.GetGlobalService(typeof(DTE)) as DTE2;
-                var workspace = componentModel.GetService<VisualStudioWorkspace>();
-
-                await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                var activeDocument = dte.ActiveDocument;
-                var activeDocumentName = $"{activeDocument.Name}.cs";
-                if (activeDocument.ProjectItem?.ContainingProject?.UniqueName is { } uniqueName)
-                {
-                    var currentDocumentCodeBehind = workspace.CurrentSolution.Projects
-                         .FirstOrDefault(x => x.FilePath?.EndsWith(uniqueName) == true)
-                         .Documents
-                         .FirstOrDefault(x => string.Equals(x.Name, activeDocumentName, StringComparison.OrdinalIgnoreCase));
-
-                    if (currentDocumentCodeBehind is null)
-                    {
-                        return;
-                    }
-
-                    var compilation = await currentDocumentCodeBehind.Project.GetCompilationAsync();
-                    var root = await currentDocumentCodeBehind.GetSyntaxRootAsync();
-                    var codeBehindClass = root.DescendantNodes()
-                        .FirstOrDefault(x => x.IsKind(SyntaxKind.ClassDeclaration)) as ClassDeclarationSyntax;
-
-                    await TaskScheduler.Default;
-
-                    var currentEvent = GetAllEvents(compilation.References.Select(compilation.GetAssemblyOrModuleSymbol)
-                        .OfType<IAssemblySymbol>().Select(a => a.GetTypeByMetadataName(controlType))
-                        .FirstOrDefault(x => x != null))
-                        .FirstOrDefault(x => x.Name == eventName) as IEventSymbol;
-                    var parameters = (currentEvent.Type as INamedTypeSymbol).DelegateInvokeMethod.Parameters;
-                    string[] parameterNames = new string[parameters.Length];
-                    string[] parameterTypes = new string[parameters.Length];
-                    for (int i = 0; i < parameters.Length; i++)
-                    {
-                        parameterNames[i] = parameters[i].MetadataName;
-                        parameterTypes[i] = parameters[i].Type.ToString();
-                    }
-                    var methodToInsert = GetMethodDeclarationSyntax("void", generatedMethodName, parameterTypes, parameterNames);
-                    var duplicatingMethodIds = new List<int>();
-                    foreach (MethodDeclarationSyntax item in codeBehindClass.DescendantNodes().Where(x => x.IsKind(SyntaxKind.MethodDeclaration)))
-                    {
-                        if (item.ReturnType is PredefinedTypeSyntax predefinedTypeSyntax &&
-                            predefinedTypeSyntax.Keyword.IsKind(SyntaxKind.VoidKeyword))
-                        {
-                            var itemParameters = item.ParameterList.Parameters.Select(x => x.Type.ToString()).ToArray();
-                            var methodToInsertParameters = methodToInsert.ParameterList.Parameters.Select(x => x.Type.ToString()).ToArray();
-                            if (itemParameters.Length == methodToInsertParameters.Length)
-                            {
-                                var sameMethods = true;
-                                for (int i = 0; i < itemParameters.Length; i++)
-                                {
-                                    if (itemParameters[i] != methodToInsertParameters[i])
-                                    {
-                                        sameMethods = false;
-                                        break;
-                                    }
-                                }
-
-                                if (sameMethods)
-                                {
-                                    var methodNameParts = item.Identifier.Text.Split('_');
-                                    if (methodNameParts.Length == 3 && int.TryParse(methodNameParts.Last(), out var methodId))
-                                    {
-                                        duplicatingMethodIds.Add(methodId);
-                                    }
-                                    else
-                                    {
-                                        duplicatingMethodIds.Add(0);
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if (duplicatingMethodIds.Count > 0)
-                    {
-                        methodToInsert = methodToInsert.WithIdentifier(SyntaxFactory.Identifier(generatedMethodName + $"_{duplicatingMethodIds.Max() + 1}"));
-                    }
-                    await ThreadHelper.JoinableTaskFactory.SwitchToMainThreadAsync();
-                    var newMethodDeclaration = codeBehindClass.AddMembers(methodToInsert);
-                    var newRoot = root.ReplaceNode(codeBehindClass, newMethodDeclaration);
-                    newRoot = Formatter.Format(newRoot, Formatter.Annotation, workspace);
-                    workspace.TryApplyChanges(currentDocumentCodeBehind.WithSyntaxRoot(newRoot).Project.Solution);
-
-                    // Hack to add method id to xaml file because i can't find a way to generate it from completions
-                    // Apply these changes after adding method because otherwise workspace will fail to add method
-                    if (duplicatingMethodIds.Count > 0)
-                    {
-                        var textDocument = dte.ActiveDocument.Object() as EnvDTE.TextDocument;
-                        var editPoint = textDocument.CreateEditPoint();
-                        editPoint.MoveToAbsoluteOffset(textDocument.Selection.ActivePoint.AbsoluteCharOffset);
-                        editPoint.Insert($"_{duplicatingMethodIds.Max() + 1}");
-                    }
-                }
+                var owner = _engine.Helper.LookupType(attribute.Name.Substring(0, dot));
+                eventName = attribute.Name.Substring(dot + 1);
+                ownerType = owner?.FullName;
             }
-            finally
+            else
             {
-                if (currentScheduler is not null && currentScheduler.Id != TaskScheduler.FromCurrentSynchronizationContext()?.Id)
-                {
-                    await currentScheduler;
-                }
+                eventName = attribute.Name;
+                var metadataEvent = type?.Events.FirstOrDefault(e => e.Name == eventName);
+                ownerType = metadataEvent?.DeclaringType?.FullName is { Length: > 0 } declaring ? declaring : type?.FullName;
             }
-        }
 
-        private MethodDeclarationSyntax GetMethodDeclarationSyntax(string returnTypeName, string methodName, string[] parameterTypes, string[] paramterNames)
-        {
-            var parameterList = SyntaxFactory.ParameterList(SyntaxFactory.SeparatedList(GetParametersList(parameterTypes, paramterNames)));
-            return SyntaxFactory.MethodDeclaration(SyntaxFactory.List<AttributeListSyntax>(),
-                                                   SyntaxFactory.TokenList(SyntaxFactory.Token(SyntaxKind.PrivateKeyword)),
-                                                   SyntaxFactory.ParseTypeName(returnTypeName),
-                                                   null,
-                                                   SyntaxFactory.Identifier(methodName),
-                                                   null,
-                                                   parameterList,
-                                                   SyntaxFactory.List<TypeParameterConstraintClauseSyntax>(),
-                                                   SyntaxFactory.Block(),
-                                                   SyntaxFactory.Token(SyntaxKind.None)).WithAdditionalAnnotations(Formatter.Annotation);
-        }
+            if (ownerType is null)
+            {
+                return;
+            }
 
-        private static IEnumerable<ISymbol> GetAllEvents(INamedTypeSymbol t)
-        {
-            foreach (var p in t.GetMembers().Where(x => x.Kind == SymbolKind.Event))
-                yield return p;
-            if (t.BaseType != null)
-                foreach (var p in GetAllEvents(t.BaseType))
-                    yield return p;
+            var settings = _serviceProvider.GetMefService<IAvaloniaVSSettings>();
+            var request = new EventHandlerGenerator.Request
+            {
+                Buffer = buffer,
+                ValueSpan = snapshot.CreateTrackingSpan(attribute.ValueStart, attribute.ValueEnd - attribute.ValueStart, SpanTrackingMode.EdgeExclusive),
+                XamlPath = XamlRoslynContext.GetFilePath(buffer),
+                ClassName = XamlScanner.GetRoot(elements)?.GetXamlDirective("Class")?.Value?.Trim(),
+                EventOwnerType = ownerType,
+                EventName = eventName,
+                IsAttached = isAttached,
+                MethodName = methodName,
+                Navigate = settings?.NavigateToGeneratedEventHandler == true,
+            };
+
+            ThreadHelper.JoinableTaskFactory
+                .RunAsync(() => EventHandlerGenerator.GenerateAsync(request, CancellationToken.None))
+                .FileAndForget("AvaloniaVS/GenerateEventHandler");
         }
 
         private static bool TryGetChar(ref Guid pguidCmdGroup, uint nCmdID, IntPtr pvaIn, out char c)

@@ -99,6 +99,17 @@ namespace CompletionEngineTests
             };
         }
 
+        /// <summary>The standard test document header (root element with xmlns declarations).</summary>
+        protected static string PrologueText => Prologue;
+
+        /// <summary>A metadata helper loaded for <paramref name="fullText"/>, as the VS host builds one.</summary>
+        protected static CompletionEngine.MetadataHelper CreateHelper(string fullText)
+        {
+            var helper = new CompletionEngine.MetadataHelper();
+            helper.SetMetadata(Metadata, fullText, typeof(XamlCompletionTestBase).Assembly.GetName().Name);
+            return helper;
+        }
+
         protected CompletionSet GetCompletionsFor(string xaml, string xamlAfterCursor = "")
         {
             xaml = Prologue + xaml;

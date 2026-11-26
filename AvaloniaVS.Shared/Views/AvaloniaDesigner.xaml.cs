@@ -316,6 +316,7 @@ namespace AvaloniaVS.Views
             _editor = editor ?? throw new ArgumentNullException(nameof(editor));
 
             InitializeEditor();
+            ReadCompiledBindingsSetting();
             LoadTargetsAndStartProcessAsync().FireAndForget();
 
             Log.Logger.Verbose("Finished AvaloniaDesigner.Start()");
@@ -1043,6 +1044,35 @@ namespace AvaloniaVS.Views
             System.Runtime.InteropServices.Marshal.ThrowExceptionForHR(hr);
 
             return hierarchy as IVsBuildPropertyStorage;
+        }
+
+        /// <summary>
+        /// Reads <c>AvaloniaUseCompiledBindingsByDefault</c> for the project so the XAML editor can
+        /// warn about bindings that need <c>x:DataType</c>. Avalonia 12's build props set it to
+        /// true; Avalonia 11 leaves it unset (false).
+        /// </summary>
+        private void ReadCompiledBindingsSetting()
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            var metadata = _editor.TextView.TextBuffer.Properties.GetOrCreateSingletonProperty(() => new XamlBufferMetadata());
+
+            try
+            {
+                if (GetMSBuildPropertyStorage(_project) is { } storage &&
+                    ErrorHandler.Succeeded(storage.GetPropertyValue(
+                        "AvaloniaUseCompiledBindingsByDefault", null, (uint)_PersistStorageType.PST_PROJECT_FILE, out var value)))
+                {
+                    metadata.CompiledBindingsByDefault = string.Equals(value?.Trim(), "true", StringComparison.OrdinalIgnoreCase);
+                    return;
+                }
+            }
+            catch (Exception ex)
+            {
+                Log.Logger.Debug(ex, "Couldn't read AvaloniaUseCompiledBindingsByDefault");
+            }
+
+            metadata.CompiledBindingsByDefault = false;
         }
 
         private string GetMSBuildProperty(string key, IVsBuildPropertyStorage storage)

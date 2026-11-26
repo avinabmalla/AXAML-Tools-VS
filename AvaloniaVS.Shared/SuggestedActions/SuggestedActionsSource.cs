@@ -48,6 +48,7 @@ namespace AvaloniaVS.Shared.SuggestedActions
         public IEnumerable<SuggestedActionSet> GetSuggestedActions(ISuggestedActionCategorySet requestedActionCategories, SnapshotSpan range,
             CancellationToken cancellationToken)
         {
+            var dataTypeActions = GetDataTypeActions(range);
             var availableSuggestedActions = SuggestedActionsAreAvailable(range);
             if (TryGetWordUnderCaret(out var extent) && (availableSuggestedActions.Item1 || availableSuggestedActions.Item2 || availableSuggestedActions.Item3))
             {
@@ -70,15 +71,52 @@ namespace AvaloniaVS.Shared.SuggestedActions
                     suggestedAction = new MissingNamespaceSuggestedAction(trackingSpan, _diffFactory, _diffBufferFactory, _bufferFactory, _textEditorFactoryService,
     metadata.CompletionMetadata.InverseNamespace, CompletionEngine.GetNamespaceAliases(extent.Span.Snapshot.TextBuffer.CurrentSnapshot.GetText()), alias);
                 }
-                return new SuggestedActionSet[] { new SuggestedActionSet(new ISuggestedAction[] { suggestedAction }) };
+                var sets = new List<SuggestedActionSet> { new SuggestedActionSet(new ISuggestedAction[] { suggestedAction }) };
+                if (dataTypeActions.Count > 0)
+                {
+                    sets.Add(new SuggestedActionSet(dataTypeActions));
+                }
+
+                return sets;
             }
-            return Enumerable.Empty<SuggestedActionSet>();
+
+            return dataTypeActions.Count > 0
+                ? new[] { new SuggestedActionSet(dataTypeActions) }
+                : Enumerable.Empty<SuggestedActionSet>();
+        }
+
+        /// <summary>
+        /// "Add x:DataType" actions when the caret is on a binding with no x:DataType in scope.
+        /// </summary>
+        private IReadOnlyList<ISuggestedAction> GetDataTypeActions(SnapshotSpan range)
+        {
+            if (!_textBuffer.Properties.TryGetProperty<XamlBufferMetadata>(typeof(XamlBufferMetadata), out var metadata) ||
+                metadata.CompletionMetadata?.InverseNamespace is not { } inverseNamespace)
+            {
+                return Array.Empty<ISuggestedAction>();
+            }
+
+            var snapshot = _textBuffer.CurrentSnapshot;
+            var position = range.Snapshot == snapshot ? range.Start.Position : _textView.Caret.Position.BufferPosition.Position;
+            var bindings = _textBuffer.Properties.TryGetProperty<AvaloniaVS.IntelliSense.BindingDataTypeTagger>(typeof(AvaloniaVS.IntelliSense.BindingDataTypeTagger), out var tagger)
+                ? tagger.GetResults(snapshot)
+                : Avalonia.Ide.CompletionEngine.Navigation.BindingDataTypeAnalyzer.Analyze(snapshot.GetText());
+
+            var binding = bindings.FirstOrDefault(b => position >= b.Start && position <= b.Start + b.Length);
+            return binding is null
+                ? Array.Empty<ISuggestedAction>()
+                : AddDataTypeSuggestedAction.Create(_textBuffer, binding, inverseNamespace).ToList();
         }
 
         public Task<bool> HasSuggestedActionsAsync(ISuggestedActionCategorySet requestedActionCategories, SnapshotSpan range, CancellationToken cancellationToken)
         {
             var availableSuggestedActions = SuggestedActionsAreAvailable(range);
             if (availableSuggestedActions.Item1 || availableSuggestedActions.Item2 || availableSuggestedActions.Item3)
+            {
+                return Task.FromResult(true);
+            }
+
+            if (GetDataTypeActions(range).Count > 0)
             {
                 return Task.FromResult(true);
             }

@@ -66,6 +66,9 @@ namespace AvaloniaVS.Shared.Views
 
         public override object Content => _content;
 
+        /// <summary>The XAML text view hosted inside the designer, once it has been created.</summary>
+        public Microsoft.VisualStudio.Text.Editor.IWpfTextView TextView => _textEditorHost.WpfTextViewHost?.TextView;
+
         int IOleCommandTarget.Exec(ref Guid pguidCmdGroup, uint nCmdID, uint nCmdexecopt, IntPtr pvaIn, IntPtr pvaOut)
         {
             ThreadHelper.ThrowIfNotOnUIThread();

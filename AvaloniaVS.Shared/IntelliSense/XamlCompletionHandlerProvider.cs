@@ -57,6 +57,18 @@ namespace AvaloniaVS.IntelliSense
                         textViewAdapter,
                         _completionEngineSource.CompletionEngine));
 
+                // Navigation is optional: if it fails to set up, log it rather than failing the
+                // whole editor (which VS reports as "Catastrophic failure").
+                try
+                {
+                    textView.Properties.GetOrCreateSingletonProperty(
+                        () => new Navigation.XamlNavigationCommandHandler(textView, textViewAdapter));
+                }
+                catch (System.Exception ex)
+                {
+                    Serilog.Log.Logger.Error(ex, "Couldn't set up XAML Go To Definition for this view");
+                }
+
                 textView.Properties.GetOrCreateSingletonProperty(
                     () => new XamlPasteCommandHandler(
                         _serviceProvider,

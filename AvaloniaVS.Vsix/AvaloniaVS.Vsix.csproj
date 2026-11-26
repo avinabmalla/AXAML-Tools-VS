@@ -37,6 +37,8 @@
     <DebugType>full</DebugType>
     <Optimize>false</Optimize>
     <OutputPath>bin\Debug\</OutputPath>
+    <!-- F5 deploys to the experimental instance (see the DeployVsixExtensionFiles override). -->
+    <DeployExtension Condition="'$(DeployExtension)' == ''">true</DeployExtension>
     <DefineConstants>DEBUG;TRACE</DefineConstants>
     <ErrorReport>prompt</ErrorReport>
     <WarningLevel>4</WarningLevel>
@@ -139,4 +141,51 @@
   <Target Name="AfterBuild">
   </Target>
   -->
+  <!--
+    F5 deployment for Visual Studio 2026: overrides the SDK's DeployVsixExtensionFiles (the last
+    definition of a target wins, so this must stay after the VsSDK import).
+
+    The SDK version unpacks the VSIX into a fixed per-user folder, then calls EnableExtension, which
+    fails with VSSDK1031 here even though the files are in place, and F5 starts without the
+    extension. Installing with VSIXInstaller instead was worse: each reinstall uses a new random
+    folder and leaves a pending uninstall, so the instance's registry and MEF catalog point at
+    deleted folders or drop the extension ("found 0 exports of IAvaloniaVSSettings").
+
+    This keeps the SDK's steps except EnableExtension, then makes VS rebuild its pkgdef
+    registrations and MEF catalog on the next start. Skip it with -p:DeployExtension=false.
+  -->
+  <Target Name="DeployVsixExtensionFiles"
+          Condition="'$(DesignTimeBuild)' != 'true' and '$(DeployExtension)'=='true' and '$(CreateVsixContainer)'=='true'"
+          DependsOnTargets="$(DeployVsixExtensionFilesDependsOn)">
+
+    <Error Text="VSIX deployment is not supported with 'dotnet build'" Condition="'$(MSBuildRuntimeType)' == 'Core'" />
+
+    <UninstallExtension Condition="'$(ExistingDeploymentPath)' != '$(VsixDeploymentPath)' AND '$(ExistingDeploymentPath)' != '' AND '$(AllUsersExtension)' != 'true'"
+                        VsixIdentifier="$(VsixID)"
+                        DevenvInstallationDirectory="$(DeployTargetInstallationDirectory)"
+                        RootSuffix="$(VSSDKTargetPlatformRegRootSuffix)"
+                        FailIfNotInstalled="false" />
+
+    <!-- Replace the previous deployment so deleted files don't linger. -->
+    <RemoveDir Directories="$(VsixDeploymentPath)" ContinueOnError="true" />
+    <Unzip ZipFile="@(_CreatedVsixContainer->'%(FullPath)')" TargetDirectory="$(VsixDeploymentPath)" />
+
+    <EnableLoadingAllExtensions DevenvInstallationDirectory="$(DeployTargetInstallationDirectory)"
+                                RootSuffix="$(VSSDKTargetPlatformRegRootSuffix)" />
+
+    <!-- What EnableExtension should have done: list the extension as enabled in the instance's
+         private registry. Without this entry VS ignores the deployed folder entirely and its MEF
+         parts never load. The path's trailing backslash is doubled so it doesn't escape the quote. -->
+    <Exec Command="&quot;$(DeployTargetInstallationDirectory)\vsregedit.exe&quot; set local $(VSSDKTargetPlatformRegRootSuffix) hkcu ExtensionManager\EnabledExtensions &quot;$(VsixID),$(VsixVersion)&quot; string &quot;$(VsixDeploymentPath)\&quot;"
+          StandardOutputImportance="low" />
+
+    <ItemGroup>
+      <_ExpMefCache Include="$(LOCALAPPDATA)\Microsoft\VisualStudio\$(VisualStudioVersion)_*$(VSSDKTargetPlatformRegRootSuffix)\ComponentModelCache\*" />
+      <_ExpConfigChanged Include="$(LOCALAPPDATA)\Microsoft\VisualStudio\$(VisualStudioVersion)_*$(VSSDKTargetPlatformRegRootSuffix)\Extensions\extensions.configurationchanged" />
+    </ItemGroup>
+    <Delete Files="@(_ExpMefCache)" ContinueOnError="true" />
+    <Touch Files="@(_ExpConfigChanged)" ContinueOnError="true" />
+
+    <Message Importance="high" Text="Deployed $(VsixID) to $(VsixDeploymentPath)" />
+  </Target>
 </Project>

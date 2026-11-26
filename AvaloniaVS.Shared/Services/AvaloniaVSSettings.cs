@@ -22,6 +22,8 @@ namespace AvaloniaVS.Services
         private AvaloniaDesignerView _designerView = AvaloniaDesignerView.Split;
         private LogEventLevel _minimumLogVerbosity = LogEventLevel.Information;
         private string _zoomLevel;
+        private string _eventHandlerNamingPattern = Avalonia.Ide.CompletionEngine.Navigation.EventHandlerNaming.DefaultPattern;
+        private bool _navigateToGeneratedEventHandler;
 
         [ImportingConstructor]
         public AvaloniaVSSettings(SVsServiceProvider vsServiceProvider)
@@ -97,6 +99,37 @@ namespace AvaloniaVS.Services
         }
 
 
+        public string EventHandlerNamingPattern
+        {
+            get => _eventHandlerNamingPattern;
+            set
+            {
+                if (string.IsNullOrWhiteSpace(value))
+                {
+                    value = Avalonia.Ide.CompletionEngine.Navigation.EventHandlerNaming.DefaultPattern;
+                }
+
+                if (_eventHandlerNamingPattern != value)
+                {
+                    _eventHandlerNamingPattern = value;
+                    RaisePropertyChanged();
+                }
+            }
+        }
+
+        public bool NavigateToGeneratedEventHandler
+        {
+            get => _navigateToGeneratedEventHandler;
+            set
+            {
+                if (_navigateToGeneratedEventHandler != value)
+                {
+                    _navigateToGeneratedEventHandler = value;
+                    RaisePropertyChanged();
+                }
+            }
+        }
+
         public event PropertyChangedEventHandler PropertyChanged;
 
         public void Load()
@@ -123,6 +156,14 @@ namespace AvaloniaVS.Services
                     SettingsKey,
                     nameof(ZoomLevel),
                   "100%");
+                EventHandlerNamingPattern = _settings.GetString(
+                    SettingsKey,
+                    nameof(EventHandlerNamingPattern),
+                    Avalonia.Ide.CompletionEngine.Navigation.EventHandlerNaming.DefaultPattern);
+                NavigateToGeneratedEventHandler = _settings.GetBoolean(
+                    SettingsKey,
+                    nameof(NavigateToGeneratedEventHandler),
+                    false);
             }
             catch (Exception ex)
             {
@@ -144,6 +185,8 @@ namespace AvaloniaVS.Services
                 _settings.SetInt32(SettingsKey, nameof(DesignerView), (int)DesignerView);
                 _settings.SetInt32(SettingsKey, nameof(MinimumLogVerbosity), (int)MinimumLogVerbosity);
                 _settings.SetString(SettingsKey, nameof(ZoomLevel), ZoomLevel);
+                _settings.SetString(SettingsKey, nameof(EventHandlerNamingPattern), EventHandlerNamingPattern);
+                _settings.SetBoolean(SettingsKey, nameof(NavigateToGeneratedEventHandler), NavigateToGeneratedEventHandler);
             }
             catch (Exception ex)
             {

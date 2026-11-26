@@ -173,6 +173,37 @@ public class CompletionEngine
 
     public MetadataHelper Helper { get; set; } = new MetadataHelper();
 
+    /// <summary>Display text of the completion that generates a new event handler.</summary>
+    public const string NewEventHandlerDisplayText = "<New Event Handler>";
+
+    /// <summary>
+    /// Pattern for generated handler names; see <see cref="Navigation.EventHandlerNaming"/>.
+    /// Set by the host from user settings.
+    /// </summary>
+    public static string EventHandlerNamePattern { get; set; } = Navigation.EventHandlerNaming.DefaultPattern;
+
+    /// <summary>
+    /// Whether <paramref name="attributeName"/> on an element of <paramref name="type"/> is an
+    /// event: one of the type's own events, or an attached event such as <c>Gestures.Tapped</c>.
+    /// </summary>
+    public bool IsEventAttribute(MetadataType? type, string? attributeName)
+    {
+        if (string.IsNullOrEmpty(attributeName))
+        {
+            return false;
+        }
+
+        var dot = attributeName!.IndexOf('.', attributeName.IndexOf(':') + 1);
+        if (dot > 0)
+        {
+            var owner = Helper.LookupType(attributeName.Substring(0, dot));
+            var name = attributeName.Substring(dot + 1);
+            return owner?.Events.Any(e => e.IsAttached && e.Name == name) == true;
+        }
+
+        return type?.Events.Any(e => e.Name == attributeName) == true;
+    }
+
     public static Dictionary<string, string> GetNamespaceAliases(string xml)
     {
         var rv = new Dictionary<string, string>();
@@ -380,16 +411,17 @@ public class CompletionEngine
                            BuildCompletionsForMarkupExtension(prop, completions, fullText, state,
                                textToCursor.Substring(state.CurrentValueStart.Value), currentAssemblyName);
             }
-            else if (type != null && type.Events.FirstOrDefault(x => x.Name == state.AttributeName) != null)
+            else if (IsEventAttribute(type, state.AttributeName))
             {
-                var name = state.TagName!;
-                // Clean up xmlns
-                var index = name.IndexOf(':');
-                if (index > -1)
-                {
-                    name = name.Substring(index + 1, name.Length - index - 1);
-                }
-                completions.Add(new Completion("<New Event Handler>", $"{name}_{state.AttributeName}", CompletionKind.StaticProperty));
+                // Name the handler after the element's x:Name (falling back to its type), reading
+                // the whole start tag so an x:Name written after the event attribute counts too.
+                var elements = Navigation.XamlScanner.Scan(fullText);
+                var element = Navigation.XamlScanner.FindStartTagAt(elements, pos);
+                var handlerName = element is not null
+                    ? Navigation.EventHandlerNaming.Create(element, state.AttributeName!, EventHandlerNamePattern)
+                    : Navigation.EventHandlerNaming.Create(state.TagName!, state.TagName!, state.AttributeName!, EventHandlerNamePattern);
+
+                completions.Add(new Completion(NewEventHandlerDisplayText, handlerName, CompletionKind.StaticProperty));
             }
             else
             {

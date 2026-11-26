@@ -12,6 +12,12 @@ namespace AvaloniaVS.Services
         AvaloniaDesignerView DesignerView { get; set; }
         LogEventLevel MinimumLogVerbosity { get; set; }
         string ZoomLevel { get; set; }
+
+        /// <summary>Pattern for generated event handler names, e.g. <c>{Name}_{Event}</c>.</summary>
+        string EventHandlerNamingPattern { get; set; }
+
+        /// <summary>Open a newly generated event handler in the C# editor.</summary>
+        bool NavigateToGeneratedEventHandler { get; set; }
         void Save();
         void Load();
     }

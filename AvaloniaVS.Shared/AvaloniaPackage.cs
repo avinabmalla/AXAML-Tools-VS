@@ -79,6 +79,11 @@ namespace AvaloniaVS
             await JoinableTaskFactory.SwitchToMainThreadAsync(cancellationToken);
 
             InitializeLogging();
+
+            var settings = this.GetMefService<IAvaloniaVSSettings>();
+            Avalonia.Ide.CompletionEngine.CompletionEngine.EventHandlerNamePattern = settings.EventHandlerNamingPattern;
+            settings.PropertyChanged += (s, e) =>
+                Avalonia.Ide.CompletionEngine.CompletionEngine.EventHandlerNamePattern = settings.EventHandlerNamingPattern;
             RegisterEditorFactory(new EditorFactory(this));
 
             var dte = (DTE)await GetServiceAsync(typeof(DTE));

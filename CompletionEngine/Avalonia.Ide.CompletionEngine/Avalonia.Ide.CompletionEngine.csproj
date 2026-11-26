@@ -3,9 +3,11 @@
   <PropertyGroup>
     <TargetFrameworks>netstandard2.0;net6.0</TargetFrameworks>
   </PropertyGroup>
-  <PropertyGroup Condition="Exists('$(SolutionDir)Key.snk')">
+  <!-- Signed regardless of how it's built: the VSIX assembly is strong-named, so an unsigned
+       copy fails to load in VS ("A strongly-named assembly is required"). -->
+  <PropertyGroup>
     <SignAssembly>true</SignAssembly>
-    <AssemblyOriginatorKeyFile>$(SolutionDir)Key.snk</AssemblyOriginatorKeyFile>
+    <AssemblyOriginatorKeyFile>$(MSBuildThisFileDirectory)..\..\Key.snk</AssemblyOriginatorKeyFile>
   </PropertyGroup>
   <ItemGroup>
     <!-- 
