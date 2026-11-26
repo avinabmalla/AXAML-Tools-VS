@@ -31,7 +31,7 @@ namespace AvaloniaVS.Services
             ThreadHelper.ThrowIfNotOnUIThread();
 
             _formatter = new MessageTemplateTextFormatter(outputTemplate, null);
-            ErrorHandler.ThrowOnFailure(output.CreatePane(paneGuid, "Avalonia XAML Tools", 1, 1));
+            ErrorHandler.ThrowOnFailure(output.CreatePane(paneGuid, "AXAML Tools", 1, 1));
             output.GetPane(paneGuid, out _pane);
         }
 

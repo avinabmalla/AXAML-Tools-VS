@@ -12,7 +12,7 @@ namespace AvaloniaVS.Navigation
 {
     internal static class CtrlClickLinkClassification
     {
-        public const string Name = "Avalonia XAML Ctrl+Click link";
+        public const string Name = "AXAML Ctrl+Click link";
 
         [Export]
         [Name(Name)]
@@ -29,7 +29,7 @@ namespace AvaloniaVS.Navigation
     {
         public CtrlClickLinkFormat()
         {
-            DisplayName = "Avalonia XAML Ctrl+Click link";
+            DisplayName = "AXAML Ctrl+Click link";
             TextDecorations = System.Windows.TextDecorations.Underline;
         }
     }

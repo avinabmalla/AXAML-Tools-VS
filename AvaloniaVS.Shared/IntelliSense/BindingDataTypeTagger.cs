@@ -88,7 +88,7 @@ namespace AvaloniaVS.IntelliSense
 
         string ITableDataSource.Identifier => "Avalonia XAML compiled binding checks";
 
-        string ITableDataSource.DisplayName => "Avalonia XAML";
+        string ITableDataSource.DisplayName => "AXAML Tools";
 
         public IEnumerable<ITagSpan<IErrorTag>> GetTags(NormalizedSnapshotSpanCollection spans)
         {
@@ -212,7 +212,7 @@ namespace AvaloniaVS.IntelliSense
                         content = _column;
                         return true;
                     case StandardTableKeyNames.BuildTool:
-                        content = "Avalonia XAML Tools";
+                        content = "AXAML Tools";
                         return true;
                     default:
                         content = null;

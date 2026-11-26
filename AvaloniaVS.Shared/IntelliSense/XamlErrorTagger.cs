@@ -58,7 +58,7 @@ namespace AvaloniaVS.IntelliSense
 
         string ITableDataSource.SourceTypeIdentifier => StandardTableDataSources.ErrorTableDataSource;
         string ITableDataSource.Identifier => "Avalonia XAML designer errors";
-        string ITableDataSource.DisplayName => "Avalonia XAML";
+        string ITableDataSource.DisplayName => "AXAML Tools";
 
         public event EventHandler Disposed;
         public event EventHandler<SnapshotSpanEventArgs> TagsChanged;

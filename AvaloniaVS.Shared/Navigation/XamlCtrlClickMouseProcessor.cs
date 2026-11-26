@@ -12,7 +12,7 @@ using Microsoft.VisualStudio.Utilities;
 namespace AvaloniaVS.Navigation
 {
     [Export(typeof(IMouseProcessorProvider))]
-    [Name("Avalonia XAML Ctrl+Click navigation")]
+    [Name("AXAML Ctrl+Click navigation")]
     [ContentType("xml")]
     [TextViewRole(PredefinedTextViewRoles.Editable)]
     internal sealed class XamlCtrlClickMouseProcessorProvider : IMouseProcessorProvider

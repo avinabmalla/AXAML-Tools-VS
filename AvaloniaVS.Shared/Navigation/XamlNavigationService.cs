@@ -261,7 +261,7 @@ namespace AvaloniaVS.Navigation
             var answer = VsShellUtilities.ShowMessageBox(
                 ServiceProvider.GlobalProvider,
                 $"'{target.MemberName}' doesn't exist in {type.Name}. Create it?",
-                "Avalonia XAML Tools",
+                "AXAML Tools",
                 OLEMSGICON.OLEMSGICON_QUERY,
                 OLEMSGBUTTON.OLEMSGBUTTON_YESNO,
                 OLEMSGDEFBUTTON.OLEMSGDEFBUTTON_FIRST);
@@ -536,7 +536,7 @@ namespace AvaloniaVS.Navigation
         private static string GetFailureMessage(XamlNavigationTarget target) => target.Kind switch
         {
             XamlNavigationKind.Type when target.TypeName is null =>
-                $"Couldn't resolve type '{target.Text}'. Build the project so Avalonia XAML Tools can load its metadata.",
+                $"Couldn't resolve type '{target.Text}'. Build the project so AXAML Tools can load its metadata.",
             XamlNavigationKind.BindingPath when target.DataTypeName is null =>
                 $"Can't resolve '{target.Text}': no x:DataType is in scope for this binding.",
             XamlNavigationKind.ResourceKey => $"Resource '{target.Text}' wasn't found in this project's XAML files.",

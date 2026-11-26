@@ -17,7 +17,7 @@ namespace AvaloniaVS.Navigation
     /// </summary>
     internal static class ReferencesWindow
     {
-        private const string SourceTypeIdentifier = "AvaloniaXamlTools.References";
+        private const string SourceTypeIdentifier = "AxamlTools.References";
 
         public static async Task ShowAsync(string title, IReadOnlyList<XamlSourceLocation> locations)
         {
@@ -95,7 +95,7 @@ namespace AvaloniaVS.Navigation
 
             public string Identifier => ReferencesWindow.SourceTypeIdentifier + "." + Guid.NewGuid().ToString("N");
 
-            public string DisplayName => "Avalonia XAML";
+            public string DisplayName => "AXAML Tools";
 
             public IDisposable Subscribe(ITableDataSink sink)
             {

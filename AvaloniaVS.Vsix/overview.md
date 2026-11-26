@@ -1,4 +1,4 @@
-# Avalonia XAML Tools (Community)
+# AXAML Tools for Visual Studio
 
 A community-maintained Visual Studio extension for [Avalonia](https://avaloniaui.net) apps, based on the MIT-licensed AvaloniaVS extension. This is **not** an official Avalonia product.
 

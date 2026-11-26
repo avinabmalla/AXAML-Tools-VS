@@ -1,6 +1,6 @@
-# Avalonia XAML Tools (Community)
+# AXAML Tools for Visual Studio
 
-A community-maintained fork of the MIT-licensed [AvaloniaVS](https://github.com/AvaloniaUI/AvaloniaVS) extension (from its `ARCHIVE` branch). It is **not** an official Avalonia product. The official extension now ships as part of [Avalonia Accelerate](https://avaloniaui.net/accelerate).
+A community-maintained fork of the MIT-licensed [AvaloniaVS](https://github.com/AvaloniaUI/AvaloniaVS) extension (from its `ARCHIVE` branch). It is **not** an official Avalonia product.
 
 What it adds to Visual Studio:
 - XAML previewer for `.axaml` files

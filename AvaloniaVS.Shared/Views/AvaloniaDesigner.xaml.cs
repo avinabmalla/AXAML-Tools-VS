@@ -854,7 +854,7 @@ namespace AvaloniaVS.Views
                 message += Environment.NewLine + Environment.NewLine + output;
             }
 
-            message += Environment.NewLine + Environment.NewLine + "The full log is in the Output window (Avalonia XAML Tools).";
+            message += Environment.NewLine + Environment.NewLine + "The full log is in the Output window (AXAML Tools).";
 
             ShowError("Process Exited", message, canRestart: true);
         }

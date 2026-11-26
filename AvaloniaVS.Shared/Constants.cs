@@ -6,7 +6,7 @@ internal static class Constants
 {
     public const string PackageGuidString = "04d3d704-cfaf-4352-b557-0528cbbc5b33";
     public static readonly Guid PackageGuid = new (PackageGuidString);
-    public const string PackageName = "Avalonia XAML Editor (Community)";
+    public const string PackageName = "AXAML Tools";
     public const string axaml = nameof(axaml);
     public const string xaml = nameof(xaml);
     public const string paml = nameof(paml);
