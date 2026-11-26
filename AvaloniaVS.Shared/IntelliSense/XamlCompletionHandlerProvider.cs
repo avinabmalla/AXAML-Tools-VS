@@ -57,6 +57,11 @@ namespace AvaloniaVS.IntelliSense
                         textViewAdapter,
                         _completionEngineSource.CompletionEngine));
 
+                // Registered after the completion handler, so it runs first: it passes Enter on
+                // (letting completion commit or the editor insert the newline), then fixes indentation.
+                textView.Properties.GetOrCreateSingletonProperty(
+                    () => new XamlIndentCommandHandler(textView, textViewAdapter));
+
                 // Navigation is optional: if it fails to set up, log it rather than failing the
                 // whole editor (which VS reports as "Catastrophic failure").
                 try

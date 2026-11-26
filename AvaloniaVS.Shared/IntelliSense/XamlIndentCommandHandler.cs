@@ -1,0 +1,104 @@
+using System;
+using Avalonia.Ide.CompletionEngine.Navigation;
+using Microsoft.VisualStudio;
+using Microsoft.VisualStudio.OLE.Interop;
+using Microsoft.VisualStudio.Shell;
+using Microsoft.VisualStudio.Text;
+using Microsoft.VisualStudio.Text.Editor;
+using Microsoft.VisualStudio.TextManager.Interop;
+using Serilog;
+
+namespace AvaloniaVS.IntelliSense
+{
+    /// <summary>
+    /// XAML-aware indentation on Enter. The XML editor indents a new line inside a start tag to
+    /// the previous line, and content after a multi-line start tag to the last attribute's column.
+    /// This lets the editor insert the newline, then fixes the new line's indentation:
+    /// attributes align with the first attribute, content goes one level in from the element,
+    /// and end tags line up with their element. See <see cref="XamlLayout.GetIndentColumn"/>.
+    /// </summary>
+    internal sealed class XamlIndentCommandHandler : IOleCommandTarget
+    {
+        private readonly ITextView _textView;
+        private readonly IOleCommandTarget _next;
+
+        public XamlIndentCommandHandler(ITextView textView, IVsTextView textViewAdapter)
+        {
+            _textView = textView;
+            textViewAdapter.AddCommandFilter(this, out _next);
+        }
+
+        public int QueryStatus(ref Guid pguidCmdGroup, uint cCmds, OLECMD[] prgCmds, IntPtr pCmdText) =>
+            _next.QueryStatus(ref pguidCmdGroup, cCmds, prgCmds, pCmdText);
+
+        public int Exec(ref Guid pguidCmdGroup, uint nCmdID, uint nCmdexecopt, IntPtr pvaIn, IntPtr pvaOut)
+        {
+            ThreadHelper.ThrowIfNotOnUIThread();
+
+            if (pguidCmdGroup != VSConstants.VSStd2K || nCmdID != (uint)VSConstants.VSStd2KCmdID.RETURN)
+            {
+                return _next.Exec(ref pguidCmdGroup, nCmdID, nCmdexecopt, pvaIn, pvaOut);
+            }
+
+            var lineBefore = _textView.Caret.Position.BufferPosition.GetContainingLine().LineNumber;
+            var result = _next.Exec(ref pguidCmdGroup, nCmdID, nCmdexecopt, pvaIn, pvaOut);
+
+            // Only when Enter actually started a new line (not when it committed a completion).
+            if (ErrorHandler.Succeeded(result) &&
+                _textView.Caret.Position.BufferPosition.GetContainingLine().LineNumber > lineBefore)
+            {
+                try
+                {
+                    FixIndentation();
+                }
+                catch (Exception ex)
+                {
+                    Log.Logger.Debug(ex, "XAML smart indent failed");
+                }
+            }
+
+            return result;
+        }
+
+        private void FixIndentation()
+        {
+            var snapshot = _textView.TextSnapshot;
+            var caret = _textView.Caret.Position;
+            var line = caret.BufferPosition.GetContainingLine();
+
+            var tabSize = _textView.Options.GetOptionValue(DefaultOptions.TabSizeOptionId);
+            var indentSize = _textView.Options.GetOptionValue(DefaultOptions.IndentSizeOptionId);
+            var useTabs = !_textView.Options.GetOptionValue(DefaultOptions.ConvertTabsToSpacesOptionId);
+
+            var column = XamlLayout.GetIndentColumn(snapshot.GetText(), line.Start.Position, tabSize, indentSize);
+            if (column is null)
+            {
+                return;
+            }
+
+            var desired = XamlLayout.MakeIndent(column.Value, useTabs, tabSize);
+
+            var whitespaceEnd = line.Start.Position;
+            while (whitespaceEnd < line.End.Position && char.IsWhiteSpace(snapshot[whitespaceEnd]))
+            {
+                whitespaceEnd++;
+            }
+
+            var current = snapshot.GetText(line.Start.Position, whitespaceEnd - line.Start.Position);
+            var caretInIndent = caret.BufferPosition.Position <= whitespaceEnd;
+
+            if (current != desired)
+            {
+                _textView.TextBuffer.Replace(new Span(line.Start.Position, current.Length), desired);
+            }
+
+            if (caretInIndent)
+            {
+                // Put the caret after the indentation (this also clears any virtual space the
+                // editor used for an empty line).
+                var newLine = _textView.TextSnapshot.GetLineFromLineNumber(line.LineNumber);
+                _textView.Caret.MoveTo(new SnapshotPoint(_textView.TextSnapshot, newLine.Start.Position + desired.Length));
+            }
+        }
+    }
+}

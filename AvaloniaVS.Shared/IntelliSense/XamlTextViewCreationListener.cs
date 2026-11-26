@@ -32,6 +32,14 @@ namespace AvaloniaVS.IntelliSense
             if (textView.TextBuffer.Properties.ContainsProperty(typeof(XamlBufferMetadata)))
             {
                 new XamlTextManipulatorRegistrar(textView);
+
+                // The designer already shows a preview beside the XAML, so the code map scrollbar
+                // only takes space. Turn off VS's enhanced scrollbar entirely for these views so they
+                // get the standard system scrollbar (bar mode alone still draws VS's own dark bar).
+                // Other files keep the user's setting.
+                textView.Options.SetOptionValue(DefaultTextViewHostOptions.ShowEnhancedScrollBarOptionId, false);
+                textView.Options.SetOptionValue(DefaultTextViewHostOptions.SourceImageMarginEnabledOptionId, false);
+                textView.Options.SetOptionValue(DefaultTextViewHostOptions.ShowPreviewOptionId, false);
             }
         }
     }
